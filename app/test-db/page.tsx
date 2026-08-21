@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { createSupabaseClient } from "@/lib/supabase";
 
 export default async function TestDatabase() {
