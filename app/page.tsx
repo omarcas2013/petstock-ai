@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type Product = {
   id: string;
@@ -52,6 +53,12 @@ type DashboardData = {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const supabase = createClient();
+  async function handleLogout() {
+  await supabase.auth.signOut();
+  router.replace("/login");
+  router.refresh();
+}
 
   const [data, setData] = useState<DashboardData>({
     products: [],
@@ -443,6 +450,13 @@ export default function DashboardPage() {
             >
               Inventario
             </button>
+            <button
+  type="button"
+  onClick={handleLogout}
+  className="rounded-lg border border-red-200 bg-white px-5 py-3 font-medium text-red-600 hover:bg-red-50"
+>
+  Cerrar sesión
+</button>
           </div>
         </div>
 
