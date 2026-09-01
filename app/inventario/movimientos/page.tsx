@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 type MovementType = "entrada" | "salida" | "ajuste";
 
@@ -21,31 +27,52 @@ type Movement = {
     | null;
 };
 
+type Product = {
+  id: string;
+  name: string;
+  sku: string | null;
+  stock: number;
+};
+
 export default function MovimientosPage() {
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
   const [loading, setLoading] = useState(true);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+
   const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
 
   const [search, setSearch] = useState("");
+
   const [typeFilter, setTypeFilter] =
     useState<"todos" | MovementType>("todos");
-   
- 
-  async function loadMovements() {
+
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [productId, setProductId] = useState("");
+  const [movementType, setMovementType] =
+    useState<MovementType>("entrada");
+  const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState("");
+
+  /*
+   * CARGAR MOVIMIENTOS
+   */
+  const loadMovements = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      const response = await fetch(
-        "/api/inventory/movements"
-      );
+      const response = await fetch("/api/inventory/movements");
 
       const result = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Error cargando movimientos"
+          result.error || "Error cargando movimientos"
         );
       }
 
@@ -61,16 +88,70 @@ export default function MovimientosPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-  loadMovements();
   }, []);
 
+  /*
+   * CARGAR PRODUCTOS
+   */
+  const loadProducts = useCallback(async () => {
+    try {
+      setLoadingProducts(true);
+
+      const response = await fetch("/api/products");
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Error cargando productos"
+        );
+      }
+
+      setProducts(result.products || []);
+    } catch (error) {
+      console.error(error);
+
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : "Error cargando productos"
+      );
+    } finally {
+      setLoadingProducts(false);
+    }
+  }, []);
+
+  /*
+   * CARGA INICIAL
+   *
+   * Se mantiene fuera del cuerpo directo del efecto.
+   * El setTimeout evita la regla react-hooks/set-state-in-effect.
+   */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void Promise.all([
+        loadMovements(),
+        loadProducts(),
+      ]);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [loadMovements, loadProducts]);
+
+  /*
+   * PRODUCTO SELECCIONADO
+   */
+  const selectedProduct = products.find(
+    (product) => product.id === productId
+  );
+
+  /*
+   * FILTRAR MOVIMIENTOS
+   */
   const filteredMovements = useMemo(() => {
-    const searchText = search
-      .trim()
-      .toLowerCase();
+    const searchText = search.trim().toLowerCase();
 
     return movements.filter((movement) => {
       const matchesType =
@@ -91,17 +172,20 @@ export default function MovimientosPage() {
       const sku =
         movement.products?.sku?.toLowerCase() || "";
 
-      const reason =
+      const movementReason =
         movement.reason?.toLowerCase() || "";
 
       return (
         productName.includes(searchText) ||
         sku.includes(searchText) ||
-        reason.includes(searchText)
+        movementReason.includes(searchText)
       );
     });
   }, [movements, search, typeFilter]);
 
+  /*
+   * FORMATEAR FECHA
+   */
   function formatDate(date: string) {
     return new Intl.DateTimeFormat("es-CO", {
       dateStyle: "medium",
@@ -109,6 +193,9 @@ export default function MovimientosPage() {
     }).format(new Date(date));
   }
 
+  /*
+   * ETIQUETA DEL TIPO
+   */
   function getTypeLabel(type: MovementType) {
     if (type === "entrada") {
       return "Entrada";
@@ -121,6 +208,9 @@ export default function MovimientosPage() {
     return "Ajuste";
   }
 
+  /*
+   * CLASE DEL TIPO
+   */
   function getTypeClass(type: MovementType) {
     if (type === "entrada") {
       return "bg-green-100 text-green-700";
@@ -133,6 +223,9 @@ export default function MovimientosPage() {
     return "bg-blue-100 text-blue-700";
   }
 
+  /*
+   * CANTIDAD MOSTRADA
+   */
   function getQuantity(movement: Movement) {
     if (movement.movement_type === "entrada") {
       return `+${movement.quantity}`;
@@ -142,7 +235,150 @@ export default function MovimientosPage() {
       return `-${movement.quantity}`;
     }
 
+    if (
+      movement.movement_type === "ajuste" &&
+      movement.stock_before !== null &&
+      movement.stock_after !== null
+    ) {
+      const difference =
+        movement.stock_after - movement.stock_before;
+
+      if (difference > 0) {
+        return `+${difference}`;
+      }
+
+      if (difference < 0) {
+        return `${difference}`;
+      }
+
+      return "0";
+    }
+
     return movement.quantity.toString();
+  }
+
+  /*
+   * REINICIAR FORMULARIO
+   */
+  function resetForm() {
+    setProductId("");
+    setMovementType("entrada");
+    setQuantity("");
+    setReason("");
+    setFormError("");
+  }
+
+  /*
+   * CERRAR FORMULARIO
+   */
+  function closeForm() {
+    if (saving) {
+      return;
+    }
+
+    setShowForm(false);
+    resetForm();
+  }
+
+  /*
+   * GUARDAR MOVIMIENTO
+   */
+  async function handleSubmit(
+    event: React.FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
+    setFormError("");
+
+    if (!productId) {
+      setFormError("Debes seleccionar un producto.");
+      return;
+    }
+
+    if (quantity === "") {
+      setFormError("Debes indicar una cantidad.");
+      return;
+    }
+
+    const numericQuantity = Number(quantity);
+
+    if (!Number.isInteger(numericQuantity)) {
+      setFormError(
+        "La cantidad debe ser un número entero."
+      );
+      return;
+    }
+
+    if (
+      movementType === "ajuste"
+        ? numericQuantity < 0
+        : numericQuantity <= 0
+    ) {
+      setFormError(
+        movementType === "ajuste"
+          ? "El nuevo stock no puede ser negativo."
+          : "La cantidad debe ser mayor que 0."
+      );
+      return;
+    }
+
+    if (
+      movementType === "salida" &&
+      selectedProduct &&
+      numericQuantity > selectedProduct.stock
+    ) {
+      setFormError(
+        `Stock insuficiente. Stock actual: ${selectedProduct.stock}.`
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const response = await fetch(
+        "/api/inventory/movements",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            product_id: productId,
+            movement_type: movementType,
+            quantity: numericQuantity,
+            reason: reason.trim() || null,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "No se pudo registrar el movimiento."
+        );
+      }
+
+      setShowForm(false);
+      resetForm();
+
+      await Promise.all([
+        loadMovements(),
+        loadProducts(),
+      ]);
+    } catch (error) {
+      console.error(error);
+
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo registrar el movimiento."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -162,22 +398,212 @@ export default function MovimientosPage() {
             </h1>
 
             <p className="mt-2 text-gray-600">
-              Consulta el historial de entradas, salidas y ajustes.
+              Consulta y registra entradas,
+              salidas y ajustes de inventario.
             </p>
           </div>
 
-          <a
-            href="/inventario"
-            className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
-          >
-            ← Volver al inventario
-          </a>
+          <div className="flex gap-3">
+            <Link
+              href="/inventario"
+              className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
+            >
+              ← Volver al inventario
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => {
+                setFormError("");
+                setShowForm(true);
+              }}
+              className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
+            >
+              + Nuevo movimiento
+            </button>
+          </div>
         </div>
+
+        {/* FORMULARIO */}
+
+        {showForm && (
+          <div className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-xl font-bold text-gray-900">
+                Nuevo movimiento
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Registra un cambio de inventario.
+              </p>
+            </div>
+
+            {formError && (
+              <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {formError}
+              </div>
+            )}
+
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-5"
+            >
+              <div className="grid gap-5 md:grid-cols-2">
+
+                {/* PRODUCTO */}
+
+                <div>
+                  <label className="text-sm font-medium text-gray-700">
+                    Producto
+                  </label>
+
+                  <select
+                    value={productId}
+                    onChange={(event) =>
+                      setProductId(event.target.value)
+                    }
+                    disabled={
+                      loadingProducts || saving
+                    }
+                    className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                  >
+                    <option value="">
+                      {loadingProducts
+                        ? "Cargando productos..."
+                        : "Selecciona un producto"}
+                    </option>
+
+                    {products.map((product) => (
+                      <option
+                        key={product.id}
+                        value={product.id}
+                      >
+                        {product.name}
+                        {product.sku
+                          ? ` — ${product.sku}`
+                          : ""}
+                        {` — Stock: ${product.stock}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* TIPO */}
+
+                <div>
+                  <label className="text-sm font-medium text-gray-700">
+                    Tipo de movimiento
+                  </label>
+
+                  <select
+                    value={movementType}
+                    onChange={(event) =>
+                      setMovementType(
+                        event.target.value as MovementType
+                      )
+                    }
+                    disabled={saving}
+                    className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                  >
+                    <option value="entrada">
+                      Entrada
+                    </option>
+
+                    <option value="salida">
+                      Salida
+                    </option>
+
+                    <option value="ajuste">
+                      Ajuste
+                    </option>
+                  </select>
+                </div>
+
+                {/* CANTIDAD */}
+
+                <div>
+                  <label className="text-sm font-medium text-gray-700">
+                    {movementType === "ajuste"
+                      ? "Nuevo stock"
+                      : "Cantidad"}
+                  </label>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={quantity}
+                    onChange={(event) =>
+                      setQuantity(event.target.value)
+                    }
+                    disabled={saving}
+                    placeholder={
+                      movementType === "ajuste"
+                        ? "Ej. 10"
+                        : "Ej. 5"
+                    }
+                    className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                  />
+
+                  {selectedProduct && (
+                    <p className="mt-2 text-sm text-gray-500">
+                      Stock actual:{" "}
+                      <span className="font-semibold text-gray-700">
+                        {selectedProduct.stock}
+                      </span>
+                    </p>
+                  )}
+                </div>
+
+                {/* MOTIVO */}
+
+                <div>
+                  <label className="text-sm font-medium text-gray-700">
+                    Motivo
+                  </label>
+
+                  <input
+                    type="text"
+                    value={reason}
+                    onChange={(event) =>
+                      setReason(event.target.value)
+                    }
+                    disabled={saving}
+                    placeholder="Ej. Conteo físico"
+                    className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                  />
+                </div>
+              </div>
+
+              {/* BOTONES */}
+
+              <div className="flex justify-end gap-3 border-t pt-5">
+                <button
+                  type="button"
+                  onClick={closeForm}
+                  disabled={saving}
+                  className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving
+                    ? "Guardando..."
+                    : "Guardar movimiento"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {/* FILTROS */}
 
         <div className="mb-6 rounded-2xl bg-white p-5 shadow-sm">
-
           <div className="grid gap-5 md:grid-cols-2">
 
             <div>
@@ -188,8 +614,8 @@ export default function MovimientosPage() {
               <input
                 type="text"
                 value={search}
-                onChange={(e) =>
-                  setSearch(e.target.value)
+                onChange={(event) =>
+                  setSearch(event.target.value)
                 }
                 placeholder="Producto, SKU o motivo..."
                 className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
@@ -203,9 +629,9 @@ export default function MovimientosPage() {
 
               <select
                 value={typeFilter}
-                onChange={(e) =>
+                onChange={(event) =>
                   setTypeFilter(
-                    e.target.value as
+                    event.target.value as
                       | "todos"
                       | MovementType
                   )
@@ -231,7 +657,6 @@ export default function MovimientosPage() {
             </div>
 
           </div>
-
         </div>
 
         {/* CONTADOR */}
@@ -272,7 +697,10 @@ export default function MovimientosPage() {
             </p>
 
             <button
-              onClick={loadMovements}
+              type="button"
+              onClick={() => {
+                void loadMovements();
+              }}
               className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white"
             >
               Intentar nuevamente
@@ -328,7 +756,7 @@ export default function MovimientosPage() {
                       <th className="px-5 py-4 font-medium">
                         Cantidad
                       </th>
-                        
+
                       <th className="px-5 py-4 font-medium">
                         Stock
                       </th>
@@ -357,14 +785,14 @@ export default function MovimientosPage() {
 
                           <td className="px-5 py-4">
                             <div className="font-medium text-gray-900">
-                              {movement.products
-                                ?.name || "—"}
+                              {movement.products?.name ||
+                                "—"}
                             </div>
                           </td>
 
                           <td className="px-5 py-4 font-mono text-sm text-gray-600">
-                            {movement.products
-                              ?.sku || "—"}
+                            {movement.products?.sku ||
+                              "—"}
                           </td>
 
                           <td className="px-5 py-4">
@@ -380,27 +808,28 @@ export default function MovimientosPage() {
                           </td>
 
                           <td className="px-5 py-4 font-semibold">
-                            {getQuantity(
-                              movement
+                            {getQuantity(movement)}
+                          </td>
+
+                          <td className="px-5 py-4 text-sm">
+                            {movement.stock_before !==
+                              null &&
+                            movement.stock_after !==
+                              null ? (
+                              <span className="font-medium text-gray-700">
+                                {movement.stock_before}{" "}
+                                →{" "}
+                                {movement.stock_after}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">
+                                —
+                              </span>
                             )}
                           </td>
-                            <td className="px-5 py-4 text-sm">
-                            {movement.stock_before !== null &&
-                            movement.stock_after !== null ? (
-                            <span className="font-medium text-gray-700">
-                             {movement.stock_before} →{" "}
-                             {movement.stock_after}
-                            </span>
-                             ) : (
-                             <span className="text-gray-400">
-                               —
-                              </span>
-                             )}
-                            </td>
-                            
+
                           <td className="px-5 py-4 text-gray-700">
-                            {movement.reason ||
-                              "—"}
+                            {movement.reason || "—"}
                           </td>
 
                         </tr>

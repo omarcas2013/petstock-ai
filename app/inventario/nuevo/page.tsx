@@ -1,59 +1,91 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+
+type Supplier = {
+  id: string;
+  name: string;
+};
+
+type ProductForm = {
+  name: string;
+  brand: string;
+  category: string;
+  supplier_id: string;
+  pet_type: string;
+  presentation: string;
+  sku: string;
+  purchase_price: string;
+  sale_price: string;
+  stock: string;
+  minimum_stock: string;
+  maximum_stock: string;
+};
+
+const initialForm: ProductForm = {
+  name: "",
+  brand: "",
+  category: "",
+  supplier_id: "",
+  pet_type: "Perros",
+  presentation: "",
+  sku: "",
+  purchase_price: "",
+  sale_price: "",
+  stock: "",
+  minimum_stock: "",
+  maximum_stock: "",
+};
 
 export default function NuevoProductoPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [suppliers, setSuppliers] = useState<
-  { id: string; name: string }[]
->([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [form, setForm] = useState<ProductForm>(initialForm);
 
-  const [form, setForm] = useState({
-    name: "",
-    brand: "",
-    category: "",
-    supplier_id: "",
-    pet_type: "Perros",
-    presentation: "",
-    sku: "",
-    purchase_price: "",
-    sale_price: "",
-    stock: "",
-    minimum_stock: "",
-    maximum_stock: "",
-  });
-useEffect(() => {
-  async function loadSuppliers() {
-    try {
-      const response = await fetch("/api/suppliers");
-      const result = await response.json();
+  useEffect(() => {
+    let cancelled = false;
 
-      if (!response.ok) {
-        throw new Error(
-          result.error || "Error cargando proveedores"
-        );
+    async function loadSuppliers() {
+      try {
+        const response = await fetch("/api/suppliers");
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Error cargando proveedores"
+          );
+        }
+
+        if (!cancelled) {
+          setSuppliers(result.suppliers || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Error cargando proveedores:", error);
+        }
       }
-
-      setSuppliers(result.suppliers || []);
-    } catch (error) {
-      console.error(
-        "Error cargando proveedores:",
-        error
-      );
     }
-  }
 
-  loadSuppliers();
-}, []);
-  function updateField(field: string, value: string) {
+    void loadSuppliers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function updateField(
+    field: keyof ProductForm,
+    value: string
+  ) {
     setForm((previous) => ({
       ...previous,
       [field]: value,
     }));
   }
 
-  async function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     setLoading(true);
@@ -81,20 +113,7 @@ useEffect(() => {
 
       setMessage("✅ Producto guardado correctamente.");
 
-      setForm({
-        name: "",
-        brand: "",
-        category: "",
-        supplier_id: "",
-        pet_type: "Perros",
-        presentation: "",
-        sku: "",
-        purchase_price: "",
-        sale_price: "",
-        stock: "",
-        minimum_stock: "",
-        maximum_stock: "",
-      });
+      setForm(initialForm);
     } catch (error) {
       console.error("Error:", error);
 
@@ -109,7 +128,6 @@ useEffect(() => {
   return (
     <main className="min-h-screen bg-gray-100 p-6 md:p-10">
       <div className="mx-auto max-w-3xl">
-
         {/* ENCABEZADO */}
 
         <div className="mb-8">
@@ -132,7 +150,6 @@ useEffect(() => {
           onSubmit={handleSubmit}
           className="space-y-6 rounded-2xl bg-white p-6 shadow-sm"
         >
-
           {/* NOMBRE */}
 
           <div>
@@ -154,7 +171,6 @@ useEffect(() => {
           {/* MARCA Y CATEGORÍA */}
 
           <div className="grid gap-5 md:grid-cols-2">
-
             <div>
               <label className="text-sm font-medium">
                 Marca
@@ -178,52 +194,49 @@ useEffect(() => {
               <input
                 value={form.category}
                 onChange={(e) =>
-                  updateField(
-                    "category",
-                    e.target.value
-                  )
+                  updateField("category", e.target.value)
                 }
                 placeholder="Ej. Alimento seco"
                 className="mt-2 w-full rounded-lg border p-3"
               />
             </div>
-
           </div>
+
           {/* PROVEEDOR */}
 
-<div>
-  <label className="text-sm font-medium">
-    Proveedor
-  </label>
+          <div>
+            <label className="text-sm font-medium">
+              Proveedor
+            </label>
 
-  <select
-    value={form.supplier_id}
-    onChange={(e) =>
-      updateField(
-        "supplier_id",
-        e.target.value
-      )
-    }
-    className="mt-2 w-full rounded-lg border p-3"
-  >
-    <option value="">
-      Seleccionar proveedor
-    </option>
+            <select
+              value={form.supplier_id}
+              onChange={(e) =>
+                updateField(
+                  "supplier_id",
+                  e.target.value
+                )
+              }
+              className="mt-2 w-full rounded-lg border p-3"
+            >
+              <option value="">
+                Seleccionar proveedor
+              </option>
 
-    {suppliers.map((supplier) => (
-      <option
-        key={supplier.id}
-        value={supplier.id}
-      >
-        {supplier.name}
-      </option>
-    ))}
-  </select>
-</div>
+              {suppliers.map((supplier) => (
+                <option
+                  key={supplier.id}
+                  value={supplier.id}
+                >
+                  {supplier.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* MASCOTA Y PRESENTACIÓN */}
 
           <div className="grid gap-5 md:grid-cols-2">
-
             <div>
               <label className="text-sm font-medium">
                 Tipo de mascota
@@ -266,7 +279,6 @@ useEffect(() => {
                 className="mt-2 w-full rounded-lg border p-3"
               />
             </div>
-
           </div>
 
           {/* SKU */}
@@ -289,7 +301,6 @@ useEffect(() => {
           {/* PRECIOS */}
 
           <div className="grid gap-5 md:grid-cols-2">
-
             <div>
               <label className="text-sm font-medium">
                 Precio de compra
@@ -331,13 +342,11 @@ useEffect(() => {
                 className="mt-2 w-full rounded-lg border p-3"
               />
             </div>
-
           </div>
 
           {/* STOCK */}
 
           <div className="grid gap-5 md:grid-cols-3">
-
             <div>
               <label className="text-sm font-medium">
                 Stock inicial
@@ -399,7 +408,6 @@ useEffect(() => {
                 className="mt-2 w-full rounded-lg border p-3"
               />
             </div>
-
           </div>
 
           {/* MENSAJE */}
@@ -413,7 +421,6 @@ useEffect(() => {
           {/* BOTONES */}
 
           <div className="flex gap-3">
-
             <button
               type="submit"
               disabled={loading}
@@ -424,15 +431,13 @@ useEffect(() => {
                 : "💾 Guardar producto"}
             </button>
 
-            <a
+            <Link
               href="/inventario"
               className="rounded-lg border px-6 py-3 font-medium"
             >
               Cancelar
-            </a>
-
+            </Link>
           </div>
-
         </form>
       </div>
     </main>

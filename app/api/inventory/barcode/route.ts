@@ -1,60 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-export async function GET() {
-  try {
-    const supabase = await createClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado." },
-        { status: 401 }
-      );
-    }
-
-    const { data: movements, error } = await supabase
-      .from("inventory_movements")
-      .select(`
-        id,
-        product_id,
-        movement_type,
-        quantity,
-        reason,
-        created_at,
-        products (
-          name,
-          sku
-        )
-      `)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error cargando movimientos:", error);
-
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      movements: movements ?? [],
-    });
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      { error: "Error interno del servidor." },
-      { status: 500 }
-    );
-  }
-}
-
 export async function POST(
   request: Request
 ) {
@@ -76,67 +22,94 @@ export async function POST(
     const body = await request.json();
 
     const {
-      product_id,
+      barcode,
       movement_type,
       quantity,
       reason,
     } = body;
 
-    if (!product_id) {
+    if (!barcode) {
       return NextResponse.json(
-        { error: "Falta product_id." },
+        { error: "Falta el código de barras." },
         { status: 400 }
       );
     }
 
     if (
-      !["entrada", "salida", "ajuste"].includes(
+      !["entrada", "salida"].includes(
         movement_type
       )
     ) {
       return NextResponse.json(
-        { error: "Tipo de movimiento no válido." },
+        {
+          error:
+            "El escáner solamente permite entradas y salidas.",
+        },
         { status: 400 }
       );
     }
 
     if (
       !Number.isInteger(quantity) ||
-      quantity < 0
+      quantity <= 0
     ) {
       return NextResponse.json(
-        { error: "Cantidad no válida." },
+        {
+          error:
+            "La cantidad debe ser mayor que 0.",
+        },
         { status: 400 }
       );
     }
 
     /*
-     * Obtener la tienda a la que pertenece
-     * el producto.
+     * Buscar producto por código de barras.
      */
     const { data: product, error: productError } =
       await supabase
         .from("products")
-        .select("id, store_id")
-        .eq("id", product_id)
+        .select(`
+          id,
+          store_id,
+          name,
+          brand,
+          category,
+          pet_type,
+          presentation,
+          sku,
+          barcode,
+          stock,
+          minimum_stock,
+          maximum_stock,
+          sale_price,
+          purchase_price,
+          suppliers (
+            id,
+            name
+          )
+        `)
+        .eq("barcode", barcode)
         .single();
 
     if (productError || !product) {
       return NextResponse.json(
-        { error: "Producto no encontrado." },
+        {
+          error:
+            "No se encontró un producto con ese código de barras.",
+        },
         { status: 404 }
       );
     }
 
     /*
-     * Registrar movimiento mediante la función
-     * PostgreSQL.
+     * Registrar movimiento utilizando la función
+     * centralizada de PostgreSQL.
      */
     const { data: movement, error } =
       await supabase.rpc(
         "register_inventory_movement",
         {
-          p_product_id: product_id,
+          p_product_id: product.id,
           p_movement_type: movement_type,
           p_quantity: quantity,
           p_reason: reason || null,
@@ -146,7 +119,7 @@ export async function POST(
 
     if (error) {
       console.error(
-        "Error registrando movimiento:",
+        "Error registrando movimiento por barcode:",
         error
       );
 
@@ -160,9 +133,47 @@ export async function POST(
       );
     }
 
+    /*
+     * Obtener nuevamente el producto para devolver
+     * el stock actualizado.
+     */
+    const { data: updatedProduct, error: updatedError } =
+      await supabase
+        .from("products")
+        .select(`
+          id,
+          name,
+          brand,
+          category,
+          pet_type,
+          presentation,
+          sku,
+          barcode,
+          stock,
+          minimum_stock,
+          maximum_stock,
+          sale_price,
+          purchase_price,
+          suppliers (
+            id,
+            name
+          )
+        `)
+        .eq("id", product.id)
+        .single();
+
+    if (updatedError || !updatedProduct) {
+      return NextResponse.json({
+        ok: true,
+        movement,
+        product: product,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       movement,
+      product: updatedProduct,
     });
   } catch (error) {
     console.error(error);

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -38,87 +37,93 @@ export default function VentaDetallePage() {
       ? params.id
       : "";
 
-  const [sale, setSale] =
-    useState<Sale | null>(null);
+  const [sale, setSale] = useState<Sale | null>(
+    null
+  );
 
   const [loading, setLoading] =
     useState(true);
 
-  const [error, setError] =
-    useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!saleId) {
-      setError(
-        "No se encontró el ID de la venta."
-      );
-      setLoading(false);
-      return;
+    let cancelled = false;
+
+    async function fetchSale() {
+      if (!saleId) {
+        if (!cancelled) {
+          setError(
+            "No se encontró el ID de la venta."
+          );
+          setLoading(false);
+        }
+
+        return;
+      }
+
+      try {
+        if (!cancelled) {
+          setLoading(true);
+          setError("");
+        }
+
+        const response = await fetch(
+          `/api/sales/${saleId}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              "No se pudo cargar la venta."
+          );
+        }
+
+        if (!cancelled) {
+          setSale(result.sale);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setError(
+            error instanceof Error
+              ? error.message
+              : "No se pudo cargar la venta."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
 
-    loadSale();
+    void fetchSale();
+
+    return () => {
+      cancelled = true;
+    };
   }, [saleId]);
 
-  async function loadSale() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response = await fetch(
-        `/api/sales/${saleId}`,
-        {
-          method: "GET",
-          cache: "no-store",
-        }
-      );
-
-      const result =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-            "No se pudo cargar la venta."
-        );
-      }
-
-      setSale(result.sale);
-    } catch (error) {
-      console.error(error);
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "No se pudo cargar la venta."
-      );
-    } finally {
-      setLoading(false);
-    }
+  function formatPrice(price: number) {
+    return new Intl.NumberFormat("es-CO", {
+      style: "currency",
+      currency: "COP",
+      maximumFractionDigits: 0,
+    }).format(price);
   }
 
-  function formatPrice(
-    price: number
-  ) {
-    return new Intl.NumberFormat(
-      "es-CO",
-      {
-        style: "currency",
-        currency: "COP",
-        maximumFractionDigits: 0,
-      }
-    ).format(price);
-  }
-
-  function formatDate(
-    date: string
-  ) {
-    return new Intl.DateTimeFormat(
-      "es-CO",
-      {
-        dateStyle: "long",
-        timeStyle: "short",
-      }
-    ).format(new Date(date));
+  function formatDate(date: string) {
+    return new Intl.DateTimeFormat("es-CO", {
+      dateStyle: "long",
+      timeStyle: "short",
+    }).format(new Date(date));
   }
 
   function paymentLabel(
@@ -148,13 +153,11 @@ export default function VentaDetallePage() {
       ? sale.sale_items
       : [];
 
-  const totalUnits =
-    items.reduce(
-      (sum, item) =>
-        sum +
-        Number(item.quantity || 0),
-      0
-    );
+  const totalUnits = items.reduce(
+    (sum, item) =>
+      sum + Number(item.quantity || 0),
+    0
+  );
 
   if (loading) {
     return (
@@ -174,21 +177,17 @@ export default function VentaDetallePage() {
     return (
       <main className="min-h-screen bg-gray-100 p-6 md:p-10">
         <div className="mx-auto max-w-5xl">
-
           <button
             type="button"
             onClick={() =>
-              router.push(
-                "/ventas/historial"
-              )
+              router.push("/ventas/historial")
             }
-            className="mb-6 rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50 no-print"
+            className="no-print mb-6 rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
           >
             ← Volver al historial
           </button>
 
           <div className="rounded-2xl border border-red-200 bg-red-50 p-8 text-red-700">
-
             <h1 className="text-xl font-bold">
               No se pudo cargar la venta
             </h1>
@@ -197,7 +196,6 @@ export default function VentaDetallePage() {
               {error ||
                 "La venta no existe."}
             </p>
-
           </div>
         </div>
       </main>
@@ -244,18 +242,12 @@ export default function VentaDetallePage() {
         }
       `}</style>
 
-      {/* ========================= */}
       {/* VISTA NORMAL */}
-      {/* ========================= */}
 
       <main className="screen-only min-h-screen bg-gray-100 p-6 md:p-10">
-
         <div className="mx-auto max-w-5xl">
-
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
             <div>
-
               <p className="text-sm font-medium text-gray-500">
                 PetStock AI
               </p>
@@ -267,11 +259,9 @@ export default function VentaDetallePage() {
               <p className="mt-2 font-mono text-sm text-gray-500">
                 {sale.id}
               </p>
-
             </div>
 
-            <div className="flex flex-wrap gap-3 no-print">
-
+            <div className="no-print flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={() =>
@@ -293,15 +283,11 @@ export default function VentaDetallePage() {
               >
                 🖨️ Imprimir comprobante
               </button>
-
             </div>
-
           </div>
 
           <div className="mb-6 grid gap-4 md:grid-cols-3">
-
             <div className="rounded-2xl bg-white p-5 shadow-sm">
-
               <p className="text-sm text-gray-500">
                 Fecha
               </p>
@@ -311,11 +297,9 @@ export default function VentaDetallePage() {
                   sale.created_at
                 )}
               </p>
-
             </div>
 
             <div className="rounded-2xl bg-white p-5 shadow-sm">
-
               <p className="text-sm text-gray-500">
                 Cliente
               </p>
@@ -324,11 +308,9 @@ export default function VentaDetallePage() {
                 {sale.customer_name ||
                   "Cliente general"}
               </p>
-
             </div>
 
             <div className="rounded-2xl bg-white p-5 shadow-sm">
-
               <p className="text-sm text-gray-500">
                 Método de pago
               </p>
@@ -338,15 +320,11 @@ export default function VentaDetallePage() {
                   sale.payment_method
                 )}
               </p>
-
             </div>
-
           </div>
 
           <section className="overflow-hidden rounded-2xl bg-white shadow-sm">
-
             <div className="border-b p-6">
-
               <h2 className="text-xl font-bold text-gray-900">
                 Productos
               </h2>
@@ -357,7 +335,6 @@ export default function VentaDetallePage() {
                   ? "unidad"
                   : "unidades"}
               </p>
-
             </div>
 
             {items.length === 0 ? (
@@ -366,13 +343,9 @@ export default function VentaDetallePage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-
                 <table className="w-full min-w-[700px]">
-
                   <thead className="bg-gray-50">
-
                     <tr className="text-left text-sm text-gray-500">
-
                       <th className="px-6 py-4 font-medium">
                         Producto
                       </th>
@@ -392,84 +365,64 @@ export default function VentaDetallePage() {
                       <th className="px-6 py-4 text-right font-medium">
                         Subtotal
                       </th>
-
                     </tr>
-
                   </thead>
 
                   <tbody className="divide-y">
+                    {items.map((item) => {
+                      const product =
+                        item.products;
 
-                    {items.map(
-                      (item) => {
+                      return (
+                        <tr
+                          key={item.id}
+                          className="hover:bg-gray-50"
+                        >
+                          <td className="px-6 py-5">
+                            <p className="font-semibold text-gray-900">
+                              {product?.name ||
+                                "Producto"}
+                            </p>
+                          </td>
 
-                        const product =
-                          item.products;
+                          <td className="px-6 py-5">
+                            <span className="font-mono text-sm text-gray-500">
+                              {product?.sku ||
+                                "—"}
+                            </span>
+                          </td>
 
-                        return (
-                          <tr
-                            key={item.id}
-                            className="hover:bg-gray-50"
-                          >
+                          <td className="px-6 py-5 text-center font-medium text-gray-900">
+                            {item.quantity}
+                          </td>
 
-                            <td className="px-6 py-5">
+                          <td className="px-6 py-5 text-right text-gray-700">
+                            {formatPrice(
+                              Number(
+                                item.unit_price
+                              )
+                            )}
+                          </td>
 
-                              <p className="font-semibold text-gray-900">
-                                {product?.name ||
-                                  "Producto"}
-                              </p>
-
-                            </td>
-
-                            <td className="px-6 py-5">
-
-                              <span className="font-mono text-sm text-gray-500">
-                                {product?.sku ||
-                                  "—"}
-                              </span>
-
-                            </td>
-
-                            <td className="px-6 py-5 text-center font-medium text-gray-900">
-                              {item.quantity}
-                            </td>
-
-                            <td className="px-6 py-5 text-right text-gray-700">
-                              {formatPrice(
-                                Number(
-                                  item.unit_price
-                                )
-                              )}
-                            </td>
-
-                            <td className="px-6 py-5 text-right font-semibold text-gray-900">
-                              {formatPrice(
-                                Number(
-                                  item.subtotal
-                                )
-                              )}
-                            </td>
-
-                          </tr>
-                        );
-                      }
-                    )}
-
+                          <td className="px-6 py-5 text-right font-semibold text-gray-900">
+                            {formatPrice(
+                              Number(
+                                item.subtotal
+                              )
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
-
                 </table>
-
               </div>
             )}
 
             <div className="border-t bg-gray-50 p-6">
-
               <div className="ml-auto max-w-sm space-y-3">
-
                 <div className="flex justify-between text-gray-600">
-
-                  <span>
-                    Subtotal
-                  </span>
+                  <span>Subtotal</span>
 
                   <span>
                     {formatPrice(
@@ -478,43 +431,29 @@ export default function VentaDetallePage() {
                       )
                     )}
                   </span>
-
                 </div>
 
                 <div className="flex items-center justify-between border-t pt-3">
-
                   <span className="text-lg font-bold text-gray-900">
                     Total
                   </span>
 
                   <span className="text-2xl font-bold text-gray-900">
                     {formatPrice(
-                      Number(
-                        sale.total
-                      )
+                      Number(sale.total)
                     )}
                   </span>
-
                 </div>
-
               </div>
-
             </div>
-
           </section>
-
         </div>
-
       </main>
 
-      {/* ========================= */}
       {/* COMPROBANTE PARA IMPRIMIR */}
-      {/* ========================= */}
 
       <div className="print-only print-receipt">
-
         <div className="text-center">
-
           <h1 className="text-3xl font-bold">
             PETSTOCK AI
           </h1>
@@ -524,7 +463,6 @@ export default function VentaDetallePage() {
           </p>
 
           <div className="my-5 border-t border-b py-4 text-left text-sm">
-
             <div className="flex justify-between gap-4">
               <span className="font-semibold">
                 Venta:
@@ -569,17 +507,12 @@ export default function VentaDetallePage() {
                 )}
               </span>
             </div>
-
           </div>
-
         </div>
 
         <table className="w-full text-sm">
-
           <thead>
-
             <tr className="border-b border-black">
-
               <th className="py-3 text-left">
                 Producto
               </th>
@@ -595,103 +528,78 @@ export default function VentaDetallePage() {
               <th className="py-3 text-right">
                 Total
               </th>
-
             </tr>
-
           </thead>
 
           <tbody>
+            {items.map((item) => {
+              const product =
+                item.products;
 
-            {items.map(
-              (item) => {
+              return (
+                <tr
+                  key={item.id}
+                  className="border-b"
+                >
+                  <td className="py-3 pr-2">
+                    <div className="font-semibold">
+                      {product?.name ||
+                        "Producto"}
+                    </div>
 
-                const product =
-                  item.products;
-
-                return (
-                  <tr
-                    key={item.id}
-                    className="border-b"
-                  >
-
-                    <td className="py-3 pr-2">
-
-                      <div className="font-semibold">
-                        {product?.name ||
-                          "Producto"}
+                    {product?.sku && (
+                      <div className="font-mono text-xs">
+                        {product.sku}
                       </div>
+                    )}
+                  </td>
 
-                      {product?.sku && (
-                        <div className="font-mono text-xs">
-                          {product.sku}
-                        </div>
-                      )}
+                  <td className="py-3 text-center">
+                    {item.quantity}
+                  </td>
 
-                    </td>
+                  <td className="py-3 text-right">
+                    {formatPrice(
+                      Number(
+                        item.unit_price
+                      )
+                    )}
+                  </td>
 
-                    <td className="py-3 text-center">
-                      {item.quantity}
-                    </td>
-
-                    <td className="py-3 text-right">
-                      {formatPrice(
-                        Number(
-                          item.unit_price
-                        )
-                      )}
-                    </td>
-
-                    <td className="py-3 text-right font-semibold">
-                      {formatPrice(
-                        Number(
-                          item.subtotal
-                        )
-                      )}
-                    </td>
-
-                  </tr>
-                );
-              }
-            )}
-
+                  <td className="py-3 text-right font-semibold">
+                    {formatPrice(
+                      Number(
+                        item.subtotal
+                      )
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
-
         </table>
 
         <div className="mt-6 ml-auto max-w-xs">
-
           <div className="flex justify-between py-2">
-
-            <span>
-              Unidades
-            </span>
+            <span>Unidades</span>
 
             <span className="font-semibold">
               {totalUnits}
             </span>
-
           </div>
 
           <div className="flex justify-between border-t pt-3 text-xl font-bold">
-
-            <span>
-              TOTAL
-            </span>
+            <span>TOTAL</span>
 
             <span>
               {formatPrice(
-                Number(
-                  sale.total
-                )
+                Number(sale.total)
               )}
             </span>
-
           </div>
-
         </div>
 
         <div className="mt-10 border-t pt-5 text-center text-sm">
-
           <p className="font-semibold">
             Gracias por su compra
           </p>
@@ -699,11 +607,8 @@ export default function VentaDetallePage() {
           <p className="mt-1 text-gray-500">
             PetStock AI
           </p>
-
         </div>
-
       </div>
     </>
   );
 }
-

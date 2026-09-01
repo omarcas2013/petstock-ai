@@ -14,21 +14,18 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleLogin(
-    event: FormEvent<HTMLFormElement>
-  ) {
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     setLoading(true);
     setError("");
 
     try {
-      const {
-        error: loginError,
-      } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+      const { error: loginError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
       if (loginError) {
         throw loginError;
@@ -54,8 +51,6 @@ export default function LoginPage() {
       <div className="mx-auto flex min-h-[calc(100vh-6rem)] max-w-md items-center justify-center">
         <div className="w-full rounded-2xl bg-white p-8 shadow-sm">
 
-          {/* ENCABEZADO */}
-
           <div className="mb-8 text-center">
             <p className="text-sm font-semibold text-gray-500">
               PetStock AI
@@ -70,8 +65,6 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* ERROR */}
-
           {error && (
             <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4">
               <p className="text-sm font-medium text-red-700">
@@ -84,12 +77,7 @@ export default function LoginPage() {
             </div>
           )}
 
-          {/* FORMULARIO */}
-
-          <form
-            onSubmit={handleLogin}
-            className="space-y-5"
-          >
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label
                 htmlFor="email"
@@ -105,9 +93,7 @@ export default function LoginPage() {
                 autoComplete="email"
                 required
                 value={email}
-                onChange={(event) =>
-                  setEmail(event.target.value)
-                }
+                onChange={(event) => setEmail(event.target.value)}
                 placeholder="correo@ejemplo.com"
                 className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
               />
@@ -128,9 +114,7 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 required
                 value={password}
-                onChange={(event) =>
-                  setPassword(event.target.value)
-                }
+                onChange={(event) => setPassword(event.target.value)}
                 placeholder="••••••••"
                 className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
               />
@@ -141,9 +125,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full rounded-xl bg-gray-900 px-4 py-3 font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading
-                ? "Iniciando sesión..."
-                : "Iniciar sesión"}
+              {loading ? "Iniciando sesión..." : "Iniciar sesión"}
             </button>
           </form>
 

@@ -1,8 +1,11 @@
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  createClient as createServerSupabase,
+} from "@/lib/supabase/server";
 
-function getSupabase() {
+function getSupabaseAdmin() {
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -28,42 +31,107 @@ function getSupabase() {
   );
 }
 
+async function getAuthenticatedUser() {
+  const supabase =
+    await createServerSupabase();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return null;
+  }
+
+  return user;
+}
+
+async function getUserStoreId(
+  userId: string
+) {
+  const supabase =
+    getSupabaseAdmin();
+
+  const { data, error } =
+    await supabase
+      .from("profiles")
+      .select("store_id")
+      .eq("id", userId)
+      .single();
+
+  if (error) {
+    throw new Error(
+      `No se pudo obtener el perfil: ${error.message}`
+    );
+  }
+
+  if (!data?.store_id) {
+    throw new Error(
+      "El usuario no tiene una tienda asignada."
+    );
+  }
+
+  return data.store_id;
+}
+
 /*
 |--------------------------------------------------------------------------
 | GET /api/sales
 |--------------------------------------------------------------------------
-| Obtiene el historial de ventas con sus productos.
+| Obtiene las ventas de la tienda del usuario autenticado.
 */
 
 export async function GET() {
   try {
-    const supabase = getSupabase();
+    const user =
+      await getAuthenticatedUser();
 
-    const { data, error } = await supabase
-      .from("sales")
-      .select(`
-        id,
-        customer_name,
-        payment_method,
-        subtotal,
-        total,
-        created_at,
-        sale_items (
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    const storeId =
+      await getUserStoreId(user.id);
+
+    const supabase =
+      getSupabaseAdmin();
+
+    const { data, error } =
+      await supabase
+        .from("sales")
+        .select(`
           id,
-          product_id,
-          quantity,
-          unit_price,
+          store_id,
+          customer_name,
+          payment_method,
           subtotal,
-          products (
+          total,
+          created_at,
+          sale_items (
             id,
-            name,
-            sku
+            product_id,
+            quantity,
+            unit_price,
+            subtotal,
+            products (
+              id,
+              name,
+              sku
+            )
           )
-        )
-      `)
-      .order("created_at", {
-        ascending: false,
-      });
+        `)
+        .eq("store_id", storeId)
+        .order("created_at", {
+          ascending: false,
+        });
 
     if (error) {
       console.error(
@@ -78,7 +146,9 @@ export async function GET() {
           hint: error.hint,
           code: error.code,
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
@@ -99,7 +169,9 @@ export async function GET() {
             ? error.message
             : "Error interno del servidor.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
@@ -108,14 +180,29 @@ export async function GET() {
 |--------------------------------------------------------------------------
 | POST /api/sales
 |--------------------------------------------------------------------------
-| Registra una venta mediante la función register_sale de Supabase.
+| Registra una venta para la tienda del usuario autenticado.
 */
 
 export async function POST(
   request: Request
 ) {
   try {
-    const body = await request.json();
+    const user =
+      await getAuthenticatedUser();
+
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    const body =
+      await request.json();
 
     const {
       items,
@@ -132,7 +219,9 @@ export async function POST(
           error:
             "La venta debe contener al menos un producto.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
@@ -145,11 +234,17 @@ export async function POST(
           error:
             "El método de pago es obligatorio.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const supabase = getSupabase();
+    const storeId =
+      await getUserStoreId(user.id);
+
+    const supabase =
+      getSupabaseAdmin();
 
     const { data, error } =
       await supabase.rpc(
@@ -161,8 +256,10 @@ export async function POST(
           p_customer_name:
             typeof customer_name ===
             "string"
-              ? customer_name.trim() || null
+              ? customer_name.trim() ||
+                null
               : null,
+          p_store_id: storeId,
         }
       );
 
@@ -179,7 +276,9 @@ export async function POST(
           hint: error.hint,
           code: error.code,
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
@@ -188,7 +287,9 @@ export async function POST(
         ok: true,
         sale: data,
       },
-      { status: 201 }
+      {
+        status: 201,
+      }
     );
   } catch (error) {
     console.error(
@@ -203,7 +304,9 @@ export async function POST(
             ? error.message
             : "Error interno del servidor.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }

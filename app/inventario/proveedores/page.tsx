@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Supplier = {
   id: string;
@@ -17,7 +18,7 @@ export default function ProveedoresPage() {
 
   const [search, setSearch] = useState("");
 
-  async function loadSuppliers() {
+  const loadSuppliers = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -44,11 +45,15 @@ export default function ProveedoresPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    loadSuppliers();
-  }, []);
+    const load = async () => {
+      await loadSuppliers();
+    };
+
+    load();
+  }, [loadSuppliers]);
 
   const filteredSuppliers = useMemo(() => {
     const searchText = search.trim().toLowerCase();
@@ -59,18 +64,18 @@ export default function ProveedoresPage() {
 
     return suppliers.filter((supplier) => {
       return (
-        supplier.name
-          .toLowerCase()
-          .includes(searchText) ||
-        supplier.phone
-          ?.toLowerCase()
-          .includes(searchText) ||
-        supplier.email
-          ?.toLowerCase()
-          .includes(searchText)
+        supplier.name.toLowerCase().includes(searchText) ||
+        supplier.phone?.toLowerCase().includes(searchText) ||
+        supplier.email?.toLowerCase().includes(searchText)
       );
     });
   }, [suppliers, search]);
+
+  function formatDate(date: string) {
+    return new Intl.DateTimeFormat("es-CO", {
+      dateStyle: "medium",
+    }).format(new Date(date));
+  }
 
   return (
     <main className="min-h-screen bg-gray-100 p-6 md:p-10">
@@ -94,25 +99,28 @@ export default function ProveedoresPage() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row">
-            <a
+
+            <Link
               href="/inventario"
               className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
             >
               ← Volver al inventario
-            </a>
+            </Link>
 
-            <button
-              type="button"
+            <Link
+              href="/proveedores/nuevo"
               className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
             >
               + Nuevo proveedor
-            </button>
+            </Link>
+
           </div>
         </div>
 
         {/* BUSCADOR */}
 
         <div className="mb-6 rounded-2xl bg-white p-5 shadow-sm">
+
           <label className="text-sm font-medium text-gray-700">
             Buscar proveedor
           </label>
@@ -124,6 +132,7 @@ export default function ProveedoresPage() {
             placeholder="Nombre, teléfono o email..."
             className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
           />
+
         </div>
 
         {/* CONTADOR */}
@@ -153,6 +162,7 @@ export default function ProveedoresPage() {
 
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">
+
             <p className="font-medium">
               Error cargando proveedores
             </p>
@@ -163,11 +173,12 @@ export default function ProveedoresPage() {
 
             <button
               type="button"
-              onClick={loadSuppliers}
+              onClick={() => loadSuppliers()}
               className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white"
             >
               Intentar nuevamente
             </button>
+
           </div>
         )}
 
@@ -178,6 +189,7 @@ export default function ProveedoresPage() {
 
             {filteredSuppliers.length === 0 ? (
               <div className="p-12 text-center">
+
                 <div className="text-4xl">
                   🏢
                 </div>
@@ -187,8 +199,20 @@ export default function ProveedoresPage() {
                 </p>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Prueba con otro término de búsqueda.
+                  {search.trim()
+                    ? "Prueba con otro término de búsqueda."
+                    : "Todavía no tienes proveedores registrados."}
                 </p>
+
+                {!search.trim() && (
+                  <Link
+                    href="/proveedores/nuevo"
+                    className="mt-5 inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
+                  >
+                    + Crear proveedor
+                  </Link>
+                )}
+
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -223,52 +247,43 @@ export default function ProveedoresPage() {
 
                   <tbody className="divide-y">
 
-                    {filteredSuppliers.map(
-                      (supplier) => (
-                        <tr
-                          key={supplier.id}
-                          className="hover:bg-gray-50"
-                        >
+                    {filteredSuppliers.map((supplier) => (
+                      <tr
+                        key={supplier.id}
+                        className="hover:bg-gray-50"
+                      >
 
-                          <td className="px-5 py-4">
-                            <div className="font-medium text-gray-900">
-                              {supplier.name}
-                            </div>
-                          </td>
+                        <td className="px-5 py-4">
+                          <div className="font-medium text-gray-900">
+                            {supplier.name}
+                          </div>
+                        </td>
 
-                          <td className="px-5 py-4 text-gray-700">
-                            {supplier.phone || "—"}
-                          </td>
+                        <td className="px-5 py-4 text-gray-700">
+                          {supplier.phone || "—"}
+                        </td>
 
-                          <td className="px-5 py-4 text-gray-700">
-                            {supplier.email || "—"}
-                          </td>
+                        <td className="px-5 py-4 text-gray-700">
+                          {supplier.email || "—"}
+                        </td>
 
-                          <td className="px-5 py-4 text-sm text-gray-600">
-                            {new Intl.DateTimeFormat(
-                              "es-CO",
-                              {
-                                dateStyle: "medium",
-                              }
-                            ).format(
-                              new Date(
-                                supplier.created_at
-                              )
-                            )}
-                          </td>
+                        <td className="px-5 py-4 text-sm text-gray-600">
+                          {formatDate(supplier.created_at)}
+                        </td>
 
-                          <td className="px-5 py-4">
-                            <button
-                              type="button"
-                              className="inline-flex w-fit min-w-[90px] items-center justify-center whitespace-nowrap rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                            >
-                              Editar
-                            </button>
-                          </td>
+                        <td className="px-5 py-4">
 
-                        </tr>
-                      )
-                    )}
+                          <Link
+                            href={`/proveedores/${supplier.id}`}
+                            className="inline-flex w-fit min-w-[90px] items-center justify-center whitespace-nowrap rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                          >
+                            Editar
+                          </Link>
+
+                        </td>
+
+                      </tr>
+                    ))}
 
                   </tbody>
 

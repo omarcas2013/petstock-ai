@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -95,7 +94,73 @@ export default function HistorialVentasPage() {
   }
 
   useEffect(() => {
-    loadSales();
+    let cancelled = false;
+
+    async function fetchSales() {
+      try {
+        const response = await fetch(
+          "/api/sales",
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+        const result =
+          await response.json();
+
+        console.log(
+          "VENTAS RECIBIDAS:",
+          result
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              "Error cargando las ventas."
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        const receivedSales =
+          Array.isArray(result.sales)
+            ? result.sales
+            : [];
+
+        setSales(receivedSales);
+        setError("");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error(
+          "ERROR HISTORIAL:",
+          error
+        );
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Error cargando las ventas."
+        );
+
+        setSales([]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchSales();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function formatPrice(
@@ -149,7 +214,7 @@ export default function HistorialVentasPage() {
       .trim()
       .toLowerCase();
 
-    let result = sales.filter(
+    const result = sales.filter(
       (sale) => {
         const customer =
           sale.customer_name
@@ -268,7 +333,6 @@ export default function HistorialVentasPage() {
         {/* HEADER */}
 
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-
           <div>
             <p className="text-sm font-medium text-gray-500">
               PetStock AI
@@ -284,7 +348,6 @@ export default function HistorialVentasPage() {
           </div>
 
           <div className="flex flex-wrap gap-3">
-
             <button
               type="button"
               onClick={() =>
@@ -304,7 +367,6 @@ export default function HistorialVentasPage() {
             >
               + Nueva venta
             </button>
-
           </div>
         </div>
 
@@ -312,7 +374,6 @@ export default function HistorialVentasPage() {
 
         {error && (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">
-
             <p className="font-semibold">
               Error
             </p>
@@ -328,16 +389,13 @@ export default function HistorialVentasPage() {
             >
               Reintentar
             </button>
-
           </div>
         )}
 
         {/* FILTROS */}
 
         <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
-
           <div className="grid gap-4 md:grid-cols-3">
-
             <div>
               <label className="text-sm font-medium text-gray-700">
                 Buscar
@@ -423,15 +481,12 @@ export default function HistorialVentasPage() {
                 </option>
               </select>
             </div>
-
           </div>
-
         </section>
 
         {/* RESUMEN */}
 
         <div className="mb-6 grid gap-4 sm:grid-cols-3">
-
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
               Ventas mostradas
@@ -463,7 +518,6 @@ export default function HistorialVentasPage() {
               {filteredUnits}
             </p>
           </div>
-
         </div>
 
         {/* CONTENIDO */}
@@ -477,7 +531,6 @@ export default function HistorialVentasPage() {
         ) : filteredSales.length ===
           0 ? (
           <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
-
             <div className="text-4xl">
               🧾
             </div>
@@ -497,19 +550,13 @@ export default function HistorialVentasPage() {
                 ventas, pero ninguna coincide con los filtros actuales.
               </p>
             )}
-
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-
             <div className="overflow-x-auto">
-
               <table className="w-full min-w-[900px]">
-
                 <thead className="border-b bg-gray-50">
-
                   <tr className="text-left text-sm text-gray-500">
-
                     <th className="px-5 py-4 font-medium">
                       Fecha
                     </th>
@@ -533,13 +580,10 @@ export default function HistorialVentasPage() {
                     <th className="px-5 py-4 text-right font-medium">
                       Acción
                     </th>
-
                   </tr>
-
                 </thead>
 
                 <tbody className="divide-y">
-
                   {filteredSales.map(
                     (sale) => {
                       const items =
@@ -568,9 +612,7 @@ export default function HistorialVentasPage() {
                           key={sale.id}
                           className="hover:bg-gray-50"
                         >
-
                           <td className="px-5 py-4">
-
                             <p className="font-medium text-gray-900">
                               {formatDate(
                                 sale.created_at
@@ -584,26 +626,21 @@ export default function HistorialVentasPage() {
                               )}
                               ...
                             </p>
-
                           </td>
 
                           <td className="px-5 py-4">
-
                             <p className="font-medium text-gray-900">
                               {sale.customer_name ||
                                 "Cliente general"}
                             </p>
-
                           </td>
 
                           <td className="px-5 py-4">
-
                             <span className="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-700">
                               {paymentLabel(
                                 sale.payment_method
                               )}
                             </span>
-
                           </td>
 
                           <td className="px-5 py-4 text-gray-700">
@@ -623,7 +660,6 @@ export default function HistorialVentasPage() {
                           </td>
 
                           <td className="px-5 py-4 text-right">
-
                             <button
                               type="button"
                               onClick={() =>
@@ -635,25 +671,17 @@ export default function HistorialVentasPage() {
                             >
                               Ver detalle
                             </button>
-
                           </td>
-
                         </tr>
                       );
                     }
                   )}
-
                 </tbody>
-
               </table>
-
             </div>
-
           </div>
         )}
-
       </div>
     </main>
   );
 }
-

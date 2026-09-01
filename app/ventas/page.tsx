@@ -44,20 +44,39 @@ type Sale = {
 export default function VentasPage() {
   const router = useRouter();
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [sales, setSales] = useState<Sale[]>([]);
+  const [products, setProducts] =
+    useState<Product[]>([]);
 
-  const [loading, setLoading] = useState(true);
-  const [loadingSales, setLoadingSales] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [cart, setCart] =
+    useState<CartItem[]>([]);
 
-  const [error, setError] = useState("");
-  const [salesError, setSalesError] = useState("");
-  const [message, setMessage] = useState("");
+  const [sales, setSales] =
+    useState<Sale[]>([]);
 
-  const [search, setSearch] = useState("");
-  const [customerName, setCustomerName] = useState("");
+  const [loading, setLoading] =
+    useState(true);
+
+  const [loadingSales, setLoadingSales] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [salesError, setSalesError] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
+
+  const [search, setSearch] =
+    useState("");
+
+  const [customerName, setCustomerName] =
+    useState("");
+
   const [paymentMethod, setPaymentMethod] =
     useState("efectivo");
 
@@ -66,9 +85,12 @@ export default function VentasPage() {
       setLoading(true);
       setError("");
 
-      const response = await fetch("/api/products");
+      const response = await fetch(
+        "/api/products"
+      );
 
-      const result = await response.json();
+      const result =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -77,7 +99,13 @@ export default function VentasPage() {
         );
       }
 
-      setProducts(result.products || []);
+      setProducts(
+        Array.isArray(
+          result.products
+        )
+          ? result.products
+          : []
+      );
     } catch (error) {
       console.error(error);
 
@@ -96,9 +124,12 @@ export default function VentasPage() {
       setLoadingSales(true);
       setSalesError("");
 
-      const response = await fetch("/api/sales");
+      const response = await fetch(
+        "/api/sales"
+      );
 
-      const result = await response.json();
+      const result =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -107,7 +138,11 @@ export default function VentasPage() {
         );
       }
 
-      setSales(result.sales || []);
+      setSales(
+        Array.isArray(result.sales)
+          ? result.sales
+          : []
+      );
     } catch (error) {
       console.error(error);
 
@@ -122,62 +157,170 @@ export default function VentasPage() {
   }
 
   useEffect(() => {
-    loadProducts();
-    loadSales();
+    let cancelled = false;
+
+    async function fetchInitialData() {
+      try {
+        const [
+          productsResponse,
+          salesResponse,
+        ] = await Promise.all([
+          fetch("/api/products", {
+            method: "GET",
+            cache: "no-store",
+          }),
+
+          fetch("/api/sales", {
+            method: "GET",
+            cache: "no-store",
+          }),
+        ]);
+
+        const productsResult =
+          await productsResponse.json();
+
+        const salesResult =
+          await salesResponse.json();
+
+        if (!productsResponse.ok) {
+          throw new Error(
+            productsResult.error ||
+              "Error cargando productos."
+          );
+        }
+
+        if (!salesResponse.ok) {
+          throw new Error(
+            salesResult.error ||
+              "Error cargando ventas."
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setProducts(
+          Array.isArray(
+            productsResult.products
+          )
+            ? productsResult.products
+            : []
+        );
+
+        setSales(
+          Array.isArray(
+            salesResult.sales
+          )
+            ? salesResult.sales
+            : []
+        );
+
+        setError("");
+        setSalesError("");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error(error);
+
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Error cargando datos.";
+
+        setError(errorMessage);
+        setSalesError(errorMessage);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setLoadingSales(false);
+        }
+      }
+    }
+
+    fetchInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filteredProducts = useMemo(() => {
-    const text = search.trim().toLowerCase();
+    const text = search
+      .trim()
+      .toLowerCase();
 
     if (!text) {
       return products;
     }
 
-    return products.filter((product) => {
-      return (
-        product.name
-          .toLowerCase()
-          .includes(text) ||
-        product.brand
-          ?.toLowerCase()
-          .includes(text) ||
-        product.category
-          ?.toLowerCase()
-          .includes(text) ||
-        product.sku
-          ?.toLowerCase()
-          .includes(text)
-      );
-    });
+    return products.filter(
+      (product) => {
+        return (
+          product.name
+            .toLowerCase()
+            .includes(text) ||
+          product.brand
+            ?.toLowerCase()
+            .includes(text) ||
+          product.category
+            ?.toLowerCase()
+            .includes(text) ||
+          product.sku
+            ?.toLowerCase()
+            .includes(text)
+        );
+      }
+    );
   }, [products, search]);
 
-  function formatPrice(price: number) {
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      maximumFractionDigits: 0,
-    }).format(price);
+  function formatPrice(
+    price: number
+  ) {
+    return new Intl.NumberFormat(
+      "es-CO",
+      {
+        style: "currency",
+        currency: "COP",
+        maximumFractionDigits: 0,
+      }
+    ).format(price);
   }
 
-  function formatDate(date: string) {
-    return new Intl.DateTimeFormat("es-CO", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(date));
+  function formatDate(
+    date: string
+  ) {
+    return new Intl.DateTimeFormat(
+      "es-CO",
+      {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }
+    ).format(new Date(date));
   }
 
-  function formatPaymentMethod(method: string) {
-    const methods: Record<string, string> = {
+  function formatPaymentMethod(
+    method: string
+  ) {
+    const methods: Record<
+      string,
+      string
+    > = {
       efectivo: "Efectivo",
       tarjeta: "Tarjeta",
-      transferencia: "Transferencia",
+      transferencia:
+        "Transferencia",
       otro: "Otro",
     };
 
     return methods[method] || method;
   }
 
-  function addToCart(product: Product) {
+  function addToCart(
+    product: Product
+  ) {
     setMessage("");
 
     if (product.stock <= 0) {
@@ -188,10 +331,12 @@ export default function VentasPage() {
     }
 
     setCart((previous) => {
-      const existing = previous.find(
-        (item) =>
-          item.product.id === product.id
-      );
+      const existing =
+        previous.find(
+          (item) =>
+            item.product.id ===
+            product.id
+        );
 
       if (existing) {
         if (
@@ -201,14 +346,16 @@ export default function VentasPage() {
           return previous;
         }
 
-        return previous.map((item) =>
-          item.product.id === product.id
-            ? {
-                ...item,
-                quantity:
-                  item.quantity + 1,
-              }
-            : item
+        return previous.map(
+          (item) =>
+            item.product.id ===
+            product.id
+              ? {
+                  ...item,
+                  quantity:
+                    item.quantity + 1,
+                }
+              : item
         );
       }
 
@@ -234,15 +381,17 @@ export default function VentasPage() {
     setCart((previous) =>
       previous.map((item) => {
         if (
-          item.product.id !== productId
+          item.product.id !==
+          productId
         ) {
           return item;
         }
 
-        const safeQuantity = Math.min(
-          quantity,
-          item.product.stock
-        );
+        const safeQuantity =
+          Math.min(
+            quantity,
+            item.product.stock
+          );
 
         return {
           ...item,
@@ -252,11 +401,14 @@ export default function VentasPage() {
     );
   }
 
-  function removeFromCart(productId: string) {
+  function removeFromCart(
+    productId: string
+  ) {
     setCart((previous) =>
       previous.filter(
         (item) =>
-          item.product.id !== productId
+          item.product.id !==
+          productId
       )
     );
   }
@@ -297,10 +449,14 @@ export default function VentasPage() {
     setSaving(true);
 
     try {
-      const items = cart.map((item) => ({
-        product_id: item.product.id,
-        quantity: item.quantity,
-      }));
+      const items = cart.map(
+        (item) => ({
+          product_id:
+            item.product.id,
+          quantity:
+            item.quantity,
+        })
+      );
 
       const response = await fetch(
         "/api/sales",
@@ -380,7 +536,9 @@ export default function VentasPage() {
             <button
               type="button"
               onClick={() =>
-                router.push("/inventario")
+                router.push(
+                  "/inventario"
+                )
               }
               className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
             >
@@ -410,7 +568,6 @@ export default function VentasPage() {
           {/* PRODUCTOS */}
 
           <section className="rounded-2xl bg-white p-6 shadow-sm">
-
             <div className="mb-5">
               <label className="text-sm font-medium text-gray-700">
                 Buscar producto
@@ -420,7 +577,9 @@ export default function VentasPage() {
                 type="text"
                 value={search}
                 onChange={(e) =>
-                  setSearch(e.target.value)
+                  setSearch(
+                    e.target.value
+                  )
                 }
                 placeholder="Nombre, marca, categoría o SKU..."
                 className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
@@ -454,7 +613,8 @@ export default function VentasPage() {
                       );
 
                     const quantityInCart =
-                      cartItem?.quantity || 0;
+                      cartItem?.quantity ||
+                      0;
 
                     const unavailable =
                       product.stock <= 0 ||
@@ -466,7 +626,9 @@ export default function VentasPage() {
                         key={product.id}
                         type="button"
                         onClick={() =>
-                          addToCart(product)
+                          addToCart(
+                            product
+                          )
                         }
                         disabled={
                           unavailable
@@ -520,7 +682,6 @@ export default function VentasPage() {
           {/* CARRITO */}
 
           <aside className="rounded-2xl bg-white p-6 shadow-sm">
-
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
@@ -558,91 +719,112 @@ export default function VentasPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {cart.map((item) => (
-                  <div
-                    key={item.product.id}
-                    className="border-b pb-4"
-                  >
-                    <div className="flex justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-gray-900">
-                          {item.product.name}
-                        </p>
+                {cart.map(
+                  (item) => (
+                    <div
+                      key={
+                        item.product.id
+                      }
+                      className="border-b pb-4"
+                    >
+                      <div className="flex justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {
+                              item
+                                .product
+                                .name
+                            }
+                          </p>
 
-                        <p className="text-sm text-gray-500">
+                          <p className="text-sm text-gray-500">
+                            {formatPrice(
+                              item
+                                .product
+                                .sale_price
+                            )}{" "}
+                            c/u
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            removeFromCart(
+                              item
+                                .product
+                                .id
+                            )
+                          }
+                          className="text-sm text-red-600"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between">
+                        <div className="flex items-center rounded-lg border">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateQuantity(
+                                item
+                                  .product
+                                  .id,
+                                item.quantity -
+                                  1
+                              )
+                            }
+                            className="px-3 py-2"
+                          >
+                            −
+                          </button>
+
+                          <span className="min-w-10 text-center font-medium">
+                            {
+                              item.quantity
+                            }
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateQuantity(
+                                item
+                                  .product
+                                  .id,
+                                item.quantity +
+                                  1
+                              )
+                            }
+                            disabled={
+                              item.quantity >=
+                              item
+                                .product
+                                .stock
+                            }
+                            className="px-3 py-2 disabled:opacity-40"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <span className="font-semibold">
                           {formatPrice(
-                            item.product
-                              .sale_price
-                          )}{" "}
-                          c/u
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          removeFromCart(
-                            item.product.id
-                          )
-                        }
-                        className="text-sm text-red-600"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="flex items-center rounded-lg border">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateQuantity(
-                              item.product.id,
-                              item.quantity - 1
-                            )
-                          }
-                          className="px-3 py-2"
-                        >
-                          −
-                        </button>
-
-                        <span className="min-w-10 text-center font-medium">
-                          {item.quantity}
+                            item
+                              .product
+                              .sale_price *
+                              item.quantity
+                          )}
                         </span>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateQuantity(
-                              item.product.id,
-                              item.quantity + 1
-                            )
-                          }
-                          disabled={
-                            item.quantity >=
-                            item.product.stock
-                          }
-                          className="px-3 py-2 disabled:opacity-40"
-                        >
-                          +
-                        </button>
                       </div>
-
-                      <span className="font-semibold">
-                        {formatPrice(
-                          item.product
-                            .sale_price *
-                            item.quantity
-                        )}
-                      </span>
                     </div>
-                  </div>
-                ))}
+                  )
+                )}
               </div>
             )}
 
             <div className="mt-6 space-y-4">
-
               <div>
                 <label className="text-sm font-medium text-gray-700">
                   Cliente
@@ -725,7 +907,6 @@ export default function VentasPage() {
         {/* HISTORIAL DE VENTAS */}
 
         <section className="mt-8 rounded-2xl bg-white shadow-sm">
-
           <div className="border-b px-6 py-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -806,77 +987,82 @@ export default function VentasPage() {
                 </thead>
 
                 <tbody className="divide-y">
-                  {sales.map((sale) => (
-                    <tr
-                      key={sale.id}
-                      className="hover:bg-gray-50"
-                    >
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
-                        {formatDate(
-                          sale.created_at
-                        )}
-                      </td>
+                  {sales.map(
+                    (sale) => (
+                      <tr
+                        key={sale.id}
+                        className="hover:bg-gray-50"
+                      >
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                          {formatDate(
+                            sale.created_at
+                          )}
+                        </td>
 
-                      <td className="px-6 py-4">
-                        <span className="font-medium text-gray-900">
-                          {sale.customer_name ||
-                            "Cliente general"}
-                        </span>
-                      </td>
+                        <td className="px-6 py-4">
+                          <span className="font-medium text-gray-900">
+                            {sale.customer_name ||
+                              "Cliente general"}
+                          </span>
+                        </td>
 
-                      <td className="px-6 py-4">
-                        <div className="max-w-[280px]">
-                          {sale.sale_items
-                            .map(
-                              (item) =>
-                                item.products
-                                  ?.name ||
-                                "Producto"
-                            )
-                            .join(", ")}
+                        <td className="px-6 py-4">
+                          <div className="max-w-[280px]">
+                            {sale.sale_items
+                              .map(
+                                (
+                                  item
+                                ) =>
+                                  item
+                                    .products
+                                    ?.name ||
+                                  "Producto"
+                              )
+                              .join(", ")}
 
-                          <p className="mt-1 text-xs text-gray-500">
-                            {sale.sale_items.reduce(
-                              (
-                                sum,
-                                item
-                              ) =>
-                                sum +
-                                item.quantity,
-                              0
-                            )}{" "}
-                            unidad(es)
-                          </p>
-                        </div>
-                      </td>
+                            <p className="mt-1 text-xs text-gray-500">
+                              {sale.sale_items.reduce(
+                                (
+                                  sum,
+                                  item
+                                ) =>
+                                  sum +
+                                  item.quantity,
+                                0
+                              )}{" "}
+                              unidad(es)
+                            </p>
+                          </div>
+                        </td>
 
-                      <td className="px-6 py-4 text-sm text-gray-700">
-                        {formatPaymentMethod(
-                          sale.payment_method
-                        )}
-                      </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          {formatPaymentMethod(
+                            sale.payment_method
+                          )}
+                        </td>
 
-                      <td className="px-6 py-4 text-right font-bold text-gray-900">
-                        {formatPrice(
-                          sale.total
-                        )}
-                      </td>
+                        <td className="px-6 py-4 text-right font-bold text-gray-900">
+                          {formatPrice(
+                            sale.total
+                          )}
+                        </td>
 
-                      <td className="px-6 py-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            router.push(
-                              `/ventas/${sale.id}`
-                            )
-                          }
-                          className="whitespace-nowrap rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-                        >
-                          Ver detalle
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              router.push(
+                                `/ventas/${sale.id}`
+                              )
+                            }
+                            className="whitespace-nowrap rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                          >
+                            Ver detalle
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  )}
                 </tbody>
               </table>
             </div>
@@ -886,4 +1072,3 @@ export default function VentasPage() {
     </main>
   );
 }
-

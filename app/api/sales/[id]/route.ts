@@ -1,8 +1,10 @@
-
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  createClient as createServerSupabase,
+} from "@/lib/supabase/server";
 
-function getSupabase() {
+function getSupabaseAdmin() {
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -28,6 +30,50 @@ function getSupabase() {
   );
 }
 
+async function getAuthenticatedUser() {
+  const supabase =
+    await createServerSupabase();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return null;
+  }
+
+  return user;
+}
+
+async function getUserStoreId(
+  userId: string
+) {
+  const supabase =
+    getSupabaseAdmin();
+
+  const { data, error } =
+    await supabase
+      .from("profiles")
+      .select("store_id")
+      .eq("id", userId)
+      .single();
+
+  if (error) {
+    throw new Error(
+      `No se pudo obtener el perfil: ${error.message}`
+    );
+  }
+
+  if (!data?.store_id) {
+    throw new Error(
+      "El usuario no tiene una tienda asignada."
+    );
+  }
+
+  return data.store_id;
+}
+
 export async function GET(
   request: Request,
   context: {
@@ -37,7 +83,20 @@ export async function GET(
   }
 ) {
   try {
-    const { id } = await context.params;
+    const user =
+      await getAuthenticatedUser();
+
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const { id } =
+      await context.params;
 
     if (!id) {
       return NextResponse.json(
@@ -49,7 +108,11 @@ export async function GET(
       );
     }
 
-    const supabase = getSupabase();
+    const storeId =
+      await getUserStoreId(user.id);
+
+    const supabase =
+      getSupabaseAdmin();
 
     const { data, error } =
       await supabase
@@ -80,25 +143,15 @@ export async function GET(
         `
         )
         .eq("id", id)
+        .eq("store_id", storeId)
         .single();
 
-    if (error) {
+    if (error || !data) {
       console.error(
         "ERROR OBTENIENDO VENTA:",
         error
       );
 
-      return NextResponse.json(
-        {
-          error:
-            error.message ||
-            "No se pudo encontrar la venta.",
-        },
-        { status: 404 }
-      );
-    }
-
-    if (!data) {
       return NextResponse.json(
         {
           error:
@@ -132,4 +185,3 @@ export async function GET(
     );
   }
 }
-

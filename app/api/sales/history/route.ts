@@ -1,101 +1,162 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  createClient as createServerSupabase,
+} from "@/lib/supabase/server";
 
-function getSupabase() {
-const supabaseUrl =
-process.env.NEXT_PUBLIC_SUPABASE_URL;
+function getSupabaseAdmin() {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-const supabaseSecretKey =
-process.env.SUPABASE_SECRET_KEY;
+  const supabaseSecretKey =
+    process.env.SUPABASE_SECRET_KEY;
 
-if (!supabaseUrl || !supabaseSecretKey) {
-throw new Error(
-"Faltan las variables de Supabase."
-);
+  if (!supabaseUrl || !supabaseSecretKey) {
+    throw new Error(
+      "Faltan las variables de Supabase."
+    );
+  }
+
+  return createClient(
+    supabaseUrl,
+    supabaseSecretKey,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }
+  );
 }
 
-return createClient(
-supabaseUrl,
-supabaseSecretKey,
-{
-auth: {
-persistSession: false,
-autoRefreshToken: false,
-detectSessionInUrl: false,
-},
+async function getAuthenticatedUser() {
+  const supabase =
+    await createServerSupabase();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return null;
+  }
+
+  return user;
 }
-);
+
+async function getUserStoreId(
+  userId: string
+) {
+  const supabase =
+    getSupabaseAdmin();
+
+  const { data, error } =
+    await supabase
+      .from("profiles")
+      .select("store_id")
+      .eq("id", userId)
+      .single();
+
+  if (error) {
+    throw new Error(
+      `No se pudo obtener el perfil: ${error.message}`
+    );
+  }
+
+  if (!data?.store_id) {
+    throw new Error(
+      "El usuario no tiene una tienda asignada."
+    );
+  }
+
+  return data.store_id;
 }
 
 export async function GET() {
-try {
-const supabase = getSupabase();
+  try {
+    const user =
+      await getAuthenticatedUser();
 
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        { status: 401 }
+      );
+    }
 
-const { data, error } = await supabase
-  .from("sales")
-  .select(`
-    id,
-    customer_name,
-    payment_method,
-    subtotal,
-    total,
-    created_at,
-    sale_items (
-      id,
-      product_id,
-      quantity,
-      unit_price,
-      subtotal,
-      products (
-        name,
-        sku
-      )
-    )
-  `)
-  .order("created_at", {
-    ascending: false,
-  });
+    const storeId =
+      await getUserStoreId(user.id);
 
-if (error) {
-  console.error(
-    "ERROR CARGANDO HISTORIAL DE VENTAS:",
-    error
-  );
+    const supabase =
+      getSupabaseAdmin();
 
-  return NextResponse.json(
-    {
-      error: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    },
-    { status: 400 }
-  );
-}
+    const { data, error } =
+      await supabase
+        .from("sales")
+        .select(`
+          id,
+          store_id,
+          customer_name,
+          payment_method,
+          subtotal,
+          total,
+          created_at,
+          sale_items (
+            id,
+            product_id,
+            quantity,
+            unit_price,
+            subtotal,
+            products (
+              name,
+              sku
+            )
+          )
+        `)
+        .eq("store_id", storeId)
+        .order("created_at", {
+          ascending: false,
+        });
 
-return NextResponse.json({
-  ok: true,
-  sales: data || [],
-});
+    if (error) {
+      console.error(
+        "ERROR CARGANDO HISTORIAL DE VENTAS:",
+        error
+      );
 
+      return NextResponse.json(
+        {
+          error: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        },
+        { status: 400 }
+      );
+    }
 
-} catch (error) {
-console.error(
-"ERROR INTERNO:",
-error
-);
+    return NextResponse.json({
+      ok: true,
+      sales: data || [],
+    });
+  } catch (error) {
+    console.error(
+      "ERROR INTERNO:",
+      error
+    );
 
-
-return NextResponse.json(
-  {
-    error:
-      error instanceof Error
-        ? error.message
-        : "Error interno del servidor.",
-  },
-  { status: 500 }
-);
-
-}
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Error interno del servidor.",
+      },
+      { status: 500 }
+    );
+  }
 }

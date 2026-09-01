@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 type Supplier = {
   id: string;
@@ -47,7 +48,11 @@ export default function ProveedoresPage() {
   }
 
   useEffect(() => {
-    loadSuppliers();
+    const load = async () => {
+      await loadSuppliers();
+    };
+
+    load();
   }, []);
 
   const filteredSuppliers = useMemo(() => {
@@ -72,6 +77,12 @@ export default function ProveedoresPage() {
     });
   }, [suppliers, search]);
 
+  function formatDate(date: string) {
+    return new Intl.DateTimeFormat("es-CO", {
+      dateStyle: "medium",
+    }).format(new Date(date));
+  }
+
   return (
     <main className="min-h-screen bg-gray-100 p-6 md:p-10">
       <div className="mx-auto max-w-7xl">
@@ -94,25 +105,28 @@ export default function ProveedoresPage() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row">
-            <a
+
+            <Link
               href="/inventario"
               className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
             >
               ← Volver al inventario
-            </a>
+            </Link>
 
-            <a
-  href="/proveedores/nuevo"
-  className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
->
-  + Nuevo proveedor
-</a>
+            <Link
+              href="/proveedores/nuevo"
+              className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
+            >
+              + Nuevo proveedor
+            </Link>
+
           </div>
         </div>
 
         {/* BUSCADOR */}
 
         <div className="mb-6 rounded-2xl bg-white p-5 shadow-sm">
+
           <label className="text-sm font-medium text-gray-700">
             Buscar proveedor
           </label>
@@ -120,10 +134,13 @@ export default function ProveedoresPage() {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
             placeholder="Nombre, teléfono o email..."
             className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
           />
+
         </div>
 
         {/* CONTADOR */}
@@ -135,7 +152,9 @@ export default function ProveedoresPage() {
               {filteredSuppliers.length}
             </span>{" "}
             proveedor
-            {filteredSuppliers.length !== 1 ? "es" : ""}
+            {filteredSuppliers.length !== 1
+              ? "es"
+              : ""}
           </p>
         </div>
 
@@ -153,6 +172,7 @@ export default function ProveedoresPage() {
 
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">
+
             <p className="font-medium">
               Error cargando proveedores
             </p>
@@ -168,6 +188,7 @@ export default function ProveedoresPage() {
             >
               Intentar nuevamente
             </button>
+
           </div>
         )}
 
@@ -178,6 +199,7 @@ export default function ProveedoresPage() {
 
             {filteredSuppliers.length === 0 ? (
               <div className="p-12 text-center">
+
                 <div className="text-4xl">
                   🏢
                 </div>
@@ -187,8 +209,20 @@ export default function ProveedoresPage() {
                 </p>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Prueba con otro término de búsqueda.
+                  {search.trim()
+                    ? "Prueba con otro término de búsqueda."
+                    : "Todavía no tienes proveedores registrados."}
                 </p>
+
+                {!search.trim() && (
+                  <Link
+                    href="/proveedores/nuevo"
+                    className="mt-5 inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
+                  >
+                    + Crear proveedor
+                  </Link>
+                )}
+
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -245,25 +279,20 @@ export default function ProveedoresPage() {
                           </td>
 
                           <td className="px-5 py-4 text-sm text-gray-600">
-                            {new Intl.DateTimeFormat(
-                              "es-CO",
-                              {
-                                dateStyle: "medium",
-                              }
-                            ).format(
-                              new Date(
-                                supplier.created_at
-                              )
+                            {formatDate(
+                              supplier.created_at
                             )}
                           </td>
 
                           <td className="px-5 py-4">
-                            <button
-                              type="button"
+
+                            <Link
+                              href={`/proveedores/${supplier.id}`}
                               className="inline-flex w-fit min-w-[90px] items-center justify-center whitespace-nowrap rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
                             >
                               Editar
-                            </button>
+                            </Link>
+
                           </td>
 
                         </tr>

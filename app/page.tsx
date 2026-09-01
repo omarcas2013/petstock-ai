@@ -1,9 +1,7 @@
+﻿"use client";
 
-"use client";
-
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 
 type Product = {
   id: string;
@@ -14,16 +12,6 @@ type Product = {
   sale_price: number;
   stock: number;
   minimum_stock: number;
-};
-
-type Sale = {
-  id: string;
-  customer_name: string | null;
-  payment_method: string;
-  subtotal: number;
-  total: number;
-  created_at: string;
-  sale_items?: SaleItem[];
 };
 
 type SaleItem = {
@@ -40,6 +28,16 @@ type SaleItem = {
   } | null;
 };
 
+type Sale = {
+  id: string;
+  customer_name: string | null;
+  payment_method: string;
+  subtotal: number;
+  total: number;
+  created_at: string;
+  sale_items?: SaleItem[];
+};
+
 type Supplier = {
   id: string;
   name: string;
@@ -51,14 +49,50 @@ type DashboardData = {
   suppliers: Supplier[];
 };
 
+type DailySales = {
+  key: string;
+  label: string;
+  total: number;
+  count: number;
+};
+
+function getBogotaDateKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function isSameBogotaDay(
+  dateString: string,
+  referenceDate = new Date()
+) {
+  return (
+    getBogotaDateKey(new Date(dateString)) ===
+    getBogotaDateKey(referenceDate)
+  );
+}
+
+function isSameBogotaMonth(
+  dateString: string,
+  referenceDate = new Date()
+) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+  });
+
+  return (
+    formatter.format(new Date(dateString)) ===
+    formatter.format(referenceDate)
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const supabase = createClient();
-  async function handleLogout() {
-  await supabase.auth.signOut();
-  router.replace("/login");
-  router.refresh();
-}
 
   const [data, setData] = useState<DashboardData>({
     products: [],
@@ -70,7 +104,7 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadDashboard(showRefreshing = false) {
+  const loadDashboard = useCallback(async (showRefreshing = false) => {
     try {
       if (showRefreshing) {
         setRefreshing(true);
@@ -96,26 +130,19 @@ export default function DashboardPage() {
         }),
       ]);
 
-      const productsResult =
-        await productsResponse.json();
-
-      const salesResult =
-        await salesResponse.json();
-
-      const suppliersResult =
-        await suppliersResponse.json();
+      const productsResult = await productsResponse.json();
+      const salesResult = await salesResponse.json();
+      const suppliersResult = await suppliersResponse.json();
 
       if (!productsResponse.ok) {
         throw new Error(
-          productsResult.error ||
-            "Error cargando productos."
+          productsResult.error || "Error cargando productos."
         );
       }
 
       if (!salesResponse.ok) {
         throw new Error(
-          salesResult.error ||
-            "Error cargando ventas."
+          salesResult.error || "Error cargando ventas."
         );
       }
 
@@ -127,12 +154,9 @@ export default function DashboardPage() {
       }
 
       setData({
-        products:
-          productsResult.products || [],
-        sales:
-          salesResult.sales || [],
-        suppliers:
-          suppliersResult.suppliers || [],
+        products: productsResult.products || [],
+        sales: salesResult.sales || [],
+        suppliers: suppliersResult.suppliers || [],
       });
     } catch (error) {
       console.error(error);
@@ -146,11 +170,15 @@ export default function DashboardPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    loadDashboard();
-  }, []);
+    const load = async () => {
+      await loadDashboard();
+    };
+
+    load();
+  }, [loadDashboard]);
 
   function formatPrice(price: number) {
     return new Intl.NumberFormat("es-CO", {
@@ -168,41 +196,6 @@ export default function DashboardPage() {
     }).format(new Date(date));
   }
 
-  function isSameBogotaDay(
-    dateString: string,
-    referenceDate = new Date()
-  ) {
-    const formatter =
-      new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      });
-
-    return (
-      formatter.format(new Date(dateString)) ===
-      formatter.format(referenceDate)
-    );
-  }
-
-  function isSameBogotaMonth(
-    dateString: string,
-    referenceDate = new Date()
-  ) {
-    const formatter =
-      new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric",
-        month: "2-digit",
-      });
-
-    return (
-      formatter.format(new Date(dateString)) ===
-      formatter.format(referenceDate)
-    );
-  }
-
   const todaySales = useMemo(() => {
     return data.sales.filter((sale) =>
       isSameBogotaDay(sale.created_at)
@@ -217,16 +210,14 @@ export default function DashboardPage() {
 
   const todayRevenue = useMemo(() => {
     return todaySales.reduce(
-      (sum, sale) =>
-        sum + Number(sale.total || 0),
+      (sum, sale) => sum + Number(sale.total || 0),
       0
     );
   }, [todaySales]);
 
   const monthRevenue = useMemo(() => {
     return monthSales.reduce(
-      (sum, sale) =>
-        sum + Number(sale.total || 0),
+      (sum, sale) => sum + Number(sale.total || 0),
       0
     );
   }, [monthSales]);
@@ -290,8 +281,7 @@ export default function DashboardPage() {
     >();
 
     for (const sale of todaySales) {
-      const method =
-        sale.payment_method || "otro";
+      const method = sale.payment_method || "otro";
 
       const current = summary.get(method) || {
         count: 0,
@@ -301,8 +291,7 @@ export default function DashboardPage() {
       summary.set(method, {
         count: current.count + 1,
         total:
-          current.total +
-          Number(sale.total || 0),
+          current.total + Number(sale.total || 0),
       });
     }
 
@@ -312,10 +301,7 @@ export default function DashboardPage() {
   }, [todaySales]);
 
   const topProducts = useMemo(() => {
-    const quantities = new Map<
-      string,
-      number
-    >();
+    const quantities = new Map<string, number>();
 
     for (const item of allSaleItems) {
       quantities.set(
@@ -327,16 +313,13 @@ export default function DashboardPage() {
 
     return [...quantities.entries()]
       .map(([productId, quantity]) => {
-        const product =
-          data.products.find(
-            (item) => item.id === productId
-          );
+        const product = data.products.find(
+          (item) => item.id === productId
+        );
 
-        const saleItem =
-          allSaleItems.find(
-            (item) =>
-              item.product_id === productId
-          );
+        const saleItem = allSaleItems.find(
+          (item) => item.product_id === productId
+        );
 
         return {
           productId,
@@ -351,10 +334,7 @@ export default function DashboardPage() {
             null,
         };
       })
-      .sort(
-        (a, b) =>
-          b.quantity - a.quantity
-      )
+      .sort((a, b) => b.quantity - a.quantity)
       .slice(0, 5);
   }, [allSaleItems, data.products]);
 
@@ -378,6 +358,75 @@ export default function DashboardPage() {
     );
   }, [data.products]);
 
+  const last7Days = useMemo<DailySales[]>(() => {
+    const days: DailySales[] = [];
+    const now = new Date();
+
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(now);
+
+      date.setDate(now.getDate() - i);
+
+      const key = getBogotaDateKey(date);
+
+      const salesForDay = data.sales.filter(
+        (sale) =>
+          getBogotaDateKey(
+            new Date(sale.created_at)
+          ) === key
+      );
+
+      const total = salesForDay.reduce(
+        (sum, sale) =>
+          sum + Number(sale.total || 0),
+        0
+      );
+
+      const label = new Intl.DateTimeFormat(
+        "es-CO",
+        {
+          weekday: "short",
+          day: "numeric",
+          timeZone: "America/Bogota",
+        }
+      )
+        .format(date)
+        .replace(".", "");
+
+      days.push({
+        key,
+        label:
+          label.charAt(0).toUpperCase() +
+          label.slice(1),
+        total,
+        count: salesForDay.length,
+      });
+    }
+
+    return days;
+  }, [data.sales]);
+
+  const maxDailySales = useMemo(() => {
+    return Math.max(
+      ...last7Days.map((day) => day.total),
+      1
+    );
+  }, [last7Days]);
+
+  const weeklyRevenue = useMemo(() => {
+    return last7Days.reduce(
+      (sum, day) => sum + day.total,
+      0
+    );
+  }, [last7Days]);
+
+  const weeklySalesCount = useMemo(() => {
+    return last7Days.reduce(
+      (sum, day) => sum + day.count,
+      0
+    );
+  }, [last7Days]);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-gray-100 p-6 md:p-10">
@@ -399,9 +448,6 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-gray-100 p-6 md:p-10">
       <div className="mx-auto max-w-7xl">
-
-        {/* ENCABEZADO */}
-
         <div className="mb-8 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium text-gray-500">
@@ -420,9 +466,15 @@ export default function DashboardPage() {
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() =>
-                loadDashboard(true)
-              }
+              onClick={() => router.push("/reportes")}
+              className="rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
+            >
+              📊 Reportes
+            </button>
+
+            <button
+              type="button"
+              onClick={() => loadDashboard(true)}
               disabled={refreshing}
               className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
@@ -430,37 +482,8 @@ export default function DashboardPage() {
                 ? "Actualizando..."
                 : "Actualizar"}
             </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                router.push("/ventas")
-              }
-              className="rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
-            >
-              + Nueva venta
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                router.push("/inventario")
-              }
-              className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Inventario
-            </button>
-            <button
-  type="button"
-  onClick={handleLogout}
-  className="rounded-lg border border-red-200 bg-white px-5 py-3 font-medium text-red-600 hover:bg-red-50"
->
-  Cerrar sesión
-</button>
           </div>
         </div>
-
-        {/* ERROR */}
 
         {error && (
           <div className="mb-6 flex flex-col gap-4 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700 md:flex-row md:items-center md:justify-between">
@@ -476,9 +499,7 @@ export default function DashboardPage() {
 
             <button
               type="button"
-              onClick={() =>
-                loadDashboard(true)
-              }
+              onClick={() => loadDashboard(true)}
               className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
             >
               Reintentar
@@ -486,10 +507,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* MÉTRICAS PRINCIPALES */}
-
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-
           <div className="rounded-2xl bg-white p-6 shadow-sm">
             <p className="text-sm font-medium text-gray-500">
               Ventas de hoy
@@ -551,13 +569,9 @@ export default function DashboardPage() {
               {outOfStockProducts.length} agotados
             </p>
           </div>
-
         </div>
 
-        {/* MÉTRICAS SECUNDARIAS */}
-
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
               Ticket promedio hoy
@@ -597,223 +611,224 @@ export default function DashboardPage() {
               {formatPrice(totalInventoryValue)}
             </p>
           </div>
-
         </div>
 
-        {/* ACCESOS RÁPIDOS */}
-
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-
-          <button
-            type="button"
-            onClick={() =>
-              router.push("/ventas")
-            }
-            className="rounded-2xl bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <p className="text-2xl">
-              🛒
-            </p>
-
-            <h2 className="mt-3 font-bold text-gray-900">
-              Nueva venta
-            </h2>
-
-            <p className="mt-1 text-sm text-gray-500">
-              Registrar una venta rápidamente.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              router.push("/inventario")
-            }
-            className="rounded-2xl bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <p className="text-2xl">
-              📦
-            </p>
-
-            <h2 className="mt-3 font-bold text-gray-900">
-              Inventario
-            </h2>
-
-            <p className="mt-1 text-sm text-gray-500">
-              Consulta productos y existencias.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              router.push(
-                "/ventas/historial"
-              )
-            }
-            className="rounded-2xl bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <p className="text-2xl">
-              🧾
-            </p>
-
-            <h2 className="mt-3 font-bold text-gray-900">
-              Historial de ventas
-            </h2>
-
-            <p className="mt-1 text-sm text-gray-500">
-              Consulta todas las ventas registradas.
-            </p>
-          </button>
-
-        </div>
-
-        {/* VENTAS RECIENTES + PAGOS */}
-
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
-
-          <section className="rounded-2xl bg-white p-6 shadow-sm">
-
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  Ventas recientes
-                </h2>
-
-                <p className="mt-1 text-sm text-gray-500">
-                  Últimas ventas registradas.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(
-                    "/ventas/historial"
-                  )
-                }
-                className="text-sm font-medium text-gray-700 hover:text-gray-900"
-              >
-                Ver todas →
-              </button>
-            </div>
-
-            {recentSales.length === 0 ? (
-              <div className="rounded-xl bg-gray-50 p-8 text-center">
-                <p className="font-medium text-gray-700">
-                  Todavía no hay ventas.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y">
-
-                {recentSales.map((sale) => (
-                  <button
-                    key={sale.id}
-                    type="button"
-                    onClick={() =>
-                      router.push(
-                        `/ventas/${sale.id}`
-                      )
-                    }
-                    className="flex w-full items-center justify-between gap-4 py-4 text-left hover:bg-gray-50"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {sale.customer_name ||
-                          "Cliente general"}
-                      </p>
-
-                      <p className="mt-1 text-xs text-gray-500">
-                        {formatDate(
-                          sale.created_at
-                        )}
-                      </p>
-
-                      <p className="mt-1 text-xs capitalize text-gray-400">
-                        {sale.payment_method}
-                      </p>
-                    </div>
-
-                    <span className="font-bold text-gray-900">
-                      {formatPrice(
-                        Number(sale.total)
-                      )}
-                    </span>
-                  </button>
-                ))}
-
-              </div>
-            )}
-
-          </section>
-
-          {/* MÉTODOS DE PAGO */}
-
-          <section className="rounded-2xl bg-white p-6 shadow-sm">
-
-            <div className="mb-5">
+        <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm">
+          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
               <h2 className="text-xl font-bold text-gray-900">
-                Métodos de pago
+                Ventas últimos 7 días
               </h2>
 
               <p className="mt-1 text-sm text-gray-500">
-                Resumen de las ventas de hoy.
+                Evolución de las ventas registradas.
               </p>
             </div>
 
-            {paymentSummary.length === 0 ? (
-              <div className="rounded-xl bg-gray-50 p-8 text-center">
-                <p className="font-medium text-gray-700">
-                  No hay ventas hoy.
+            <div className="flex gap-6">
+              <div>
+                <p className="text-xs text-gray-500">
+                  Total semana
+                </p>
+
+                <p className="mt-1 font-bold text-gray-900">
+                  {formatPrice(weeklyRevenue)}
                 </p>
               </div>
-            ) : (
-              <div className="space-y-3">
 
-                {paymentSummary.map(
-                  ([method, summary]) => (
-                    <div
-                      key={method}
-                      className="flex items-center justify-between rounded-xl border border-gray-200 p-4"
-                    >
-                      <div>
-                        <p className="font-medium capitalize text-gray-900">
-                          {method}
-                        </p>
+              <div>
+                <p className="text-xs text-gray-500">
+                  Ventas
+                </p>
 
-                        <p className="mt-1 text-xs text-gray-500">
-                          {summary.count}{" "}
-                          {summary.count === 1
-                            ? "venta"
-                            : "ventas"}
-                        </p>
-                      </div>
+                <p className="mt-1 font-bold text-gray-900">
+                  {weeklySalesCount}
+                </p>
+              </div>
+            </div>
+          </div>
 
-                      <p className="font-bold text-gray-900">
-                        {formatPrice(
-                          summary.total
-                        )}
+          <div className="h-72">
+            <div className="flex h-full items-end gap-3">
+              {last7Days.map((day) => {
+                const height =
+                  day.total === 0
+                    ? 3
+                    : Math.max(
+                        (day.total / maxDailySales) *
+                          100,
+                        8
+                      );
+
+                return (
+                  <div
+                    key={day.key}
+                    className="flex h-full flex-1 flex-col items-center justify-end"
+                  >
+                    <div className="mb-2 text-center">
+                      <p className="text-xs font-semibold text-gray-700">
+                        {day.total > 0
+                          ? formatPrice(day.total)
+                          : "$0"}
                       </p>
                     </div>
-                  )
-                )}
 
-              </div>
-            )}
+                    <div className="flex h-48 w-full items-end justify-center">
+                      <div
+                        className="w-full max-w-12 rounded-t-lg bg-gray-900 transition-all duration-300 hover:bg-gray-700"
+                        style={{
+                          height: `${height}%`,
+                        }}
+                        title={`${day.label}: ${formatPrice(
+                          day.total
+                        )}`}
+                      />
+                    </div>
 
-          </section>
+                    <div className="mt-3 text-center">
+                      <p className="text-xs font-medium text-gray-600">
+                        {day.label}
+                      </p>
 
-        </div>
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        {day.count}{" "}
+                        {day.count === 1
+                          ? "venta"
+                          : "ventas"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
 
-        {/* INVENTARIO */}
+        <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm">
+          <div className="mb-5">
+            <h2 className="text-xl font-bold text-gray-900">
+              Métodos de pago
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Resumen de las ventas de hoy.
+            </p>
+          </div>
+
+          {paymentSummary.length === 0 ? (
+            <div className="rounded-xl bg-gray-50 p-8 text-center">
+              <p className="text-2xl">
+                💳
+              </p>
+
+              <p className="mt-2 font-medium text-gray-700">
+                No hay ventas hoy.
+              </p>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Aquí aparecerá el resumen por método
+                de pago.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {paymentSummary.map(
+                ([method, summary]) => (
+                  <div
+                    key={method}
+                    className="flex items-center justify-between rounded-xl border border-gray-200 p-4"
+                  >
+                    <div>
+                      <p className="font-medium capitalize text-gray-900">
+                        {method}
+                      </p>
+
+                      <p className="mt-1 text-xs text-gray-500">
+                        {summary.count}{" "}
+                        {summary.count === 1
+                          ? "venta"
+                          : "ventas"}
+                      </p>
+                    </div>
+
+                    <p className="font-bold text-gray-900">
+                      {formatPrice(summary.total)}
+                    </p>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">
+                Ventas recientes
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Últimas ventas registradas.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push("/ventas/historial")
+              }
+              className="text-sm font-medium text-gray-700 hover:text-gray-900"
+            >
+              Ver todas →
+            </button>
+          </div>
+
+          {recentSales.length === 0 ? (
+            <div className="rounded-xl bg-gray-50 p-8 text-center">
+              <p className="font-medium text-gray-700">
+                Todavía no hay ventas.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {recentSales.map((sale) => (
+                <button
+                  key={sale.id}
+                  type="button"
+                  onClick={() =>
+                    router.push(`/ventas/${sale.id}`)
+                  }
+                  className="flex w-full items-center justify-between gap-4 py-4 text-left hover:bg-gray-50"
+                >
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {sale.customer_name ||
+                        "Cliente general"}
+                    </p>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      {formatDate(sale.created_at)}
+                    </p>
+
+                    <p className="mt-1 text-xs capitalize text-gray-400">
+                      {sale.payment_method}
+                    </p>
+                  </div>
+
+                  <span className="font-bold text-gray-900">
+                    {formatPrice(
+                      Number(sale.total)
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
-
-          {/* STOCK BAJO */}
-
           <section className="rounded-2xl bg-white p-6 shadow-sm">
-
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
@@ -852,7 +867,6 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-3">
-
                 {lowStockProducts
                   .slice(0, 5)
                   .map((product) => (
@@ -878,22 +892,16 @@ export default function DashboardPage() {
                         </p>
 
                         <p className="text-xs text-gray-500">
-                          mínimo{" "}
-                          {product.minimum_stock}
+                          mínimo {product.minimum_stock}
                         </p>
                       </div>
                     </div>
                   ))}
-
               </div>
             )}
-
           </section>
 
-          {/* AGOTADOS */}
-
           <section className="rounded-2xl bg-white p-6 shadow-sm">
-
             <div className="mb-5">
               <h2 className="text-xl font-bold text-gray-900">
                 Productos agotados
@@ -916,7 +924,6 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-3">
-
                 {outOfStockProducts
                   .slice(0, 5)
                   .map((product) => (
@@ -941,18 +948,12 @@ export default function DashboardPage() {
                       </span>
                     </div>
                   ))}
-
               </div>
             )}
-
           </section>
-
         </div>
 
-        {/* PRODUCTOS MÁS VENDIDOS */}
-
         <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm">
-
           <div className="mb-5">
             <h2 className="text-xl font-bold text-gray-900">
               Productos más vendidos
@@ -971,7 +972,6 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-
               {topProducts.map(
                 (product, index) => (
                   <div
@@ -1001,18 +1001,12 @@ export default function DashboardPage() {
                   </div>
                 )
               )}
-
             </div>
           )}
-
         </section>
 
-        {/* RESUMEN FINAL */}
-
         <section className="mt-6 rounded-2xl bg-gray-900 p-6 text-white">
-
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-
             <div>
               <p className="text-sm text-gray-400">
                 Resumen PetStock AI
@@ -1030,7 +1024,6 @@ export default function DashboardPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-
               <div>
                 <p className="text-sm text-gray-400">
                   Productos
@@ -1070,15 +1063,10 @@ export default function DashboardPage() {
                   {totalUnitsSold}
                 </p>
               </div>
-
             </div>
-
           </div>
-
         </section>
-
       </div>
     </main>
   );
 }
-

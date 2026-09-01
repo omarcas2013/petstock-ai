@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createClient as createServerSupabase } from "@/lib/supabase/server";
 
-function getSupabase() {
+function getSupabaseAdmin() {
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -27,6 +28,50 @@ function getSupabase() {
   );
 }
 
+async function getAuthenticatedUser() {
+  const supabase =
+    await createServerSupabase();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return null;
+  }
+
+  return user;
+}
+
+async function getUserStoreId(
+  userId: string
+) {
+  const supabase =
+    getSupabaseAdmin();
+
+  const { data, error } =
+    await supabase
+      .from("profiles")
+      .select("store_id")
+      .eq("id", userId)
+      .single();
+
+  if (error) {
+    throw new Error(
+      `No se pudo obtener el perfil: ${error.message}`
+    );
+  }
+
+  if (!data?.store_id) {
+    throw new Error(
+      "El usuario no tiene una tienda asignada."
+    );
+  }
+
+  return data.store_id;
+}
+
 export async function GET(
   request: Request,
   context: {
@@ -34,25 +79,39 @@ export async function GET(
   }
 ) {
   try {
-    const { id } = await context.params;
+    const user =
+      await getAuthenticatedUser();
 
-    const supabase = getSupabase();
-
-    const { data, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error) {
-      console.error(
-        "ERROR OBTENIENDO PRODUCTO:",
-        error
-      );
-
+    if (!user) {
       return NextResponse.json(
         {
-          error: error.message,
+          error: "No autenticado.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const { id } =
+      await context.params;
+
+    const storeId =
+      await getUserStoreId(user.id);
+
+    const supabase =
+      getSupabaseAdmin();
+
+    const { data, error } =
+      await supabase
+        .from("products")
+        .select("*")
+        .eq("id", id)
+        .eq("store_id", storeId)
+        .single();
+
+    if (error || !data) {
+      return NextResponse.json(
+        {
+          error: "Producto no encontrado.",
         },
         { status: 404 }
       );
@@ -63,7 +122,7 @@ export async function GET(
     });
   } catch (error) {
     console.error(
-      "ERROR INTERNO:",
+      "ERROR OBTENIENDO PRODUCTO:",
       error
     );
 
@@ -86,23 +145,48 @@ export async function PUT(
   }
 ) {
   try {
-    const { id } = await context.params;
+    const user =
+      await getAuthenticatedUser();
 
-    const body = await request.json();
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        { status: 401 }
+      );
+    }
 
-    const supabase = getSupabase();
+    const { id } =
+      await context.params;
+
+    const body =
+      await request.json();
+
+    const storeId =
+      await getUserStoreId(user.id);
+
+    const supabase =
+      getSupabaseAdmin();
 
     /*
-     * Primero obtenemos el producto actual.
+     * Obtenemos el producto únicamente
+     * si pertenece a la tienda del usuario.
      */
-    const { data: currentProduct, error: currentError } =
-      await supabase
-        .from("products")
-        .select("*")
-        .eq("id", id)
-        .single();
+    const {
+      data: currentProduct,
+      error: currentError,
+    } = await supabase
+      .from("products")
+      .select("*")
+      .eq("id", id)
+      .eq("store_id", storeId)
+      .single();
 
-    if (currentError || !currentProduct) {
+    if (
+      currentError ||
+      !currentProduct
+    ) {
       return NextResponse.json(
         {
           error: "Producto no encontrado.",
@@ -223,16 +307,20 @@ export async function PUT(
     }
 
     /*
-     * Actualizamos solamente los datos generales.
+     * Actualizamos solamente datos generales.
      *
      * IMPORTANTE:
-     * No actualizamos stock aquí.
+     * No actualizamos stock directamente aquí.
      */
-    const { data, error } = await supabase
+    const {
+      data,
+      error,
+    } = await supabase
       .from("products")
       .update({
         name: body.name.trim(),
-        brand: body.brand?.trim() || null,
+        brand:
+          body.brand?.trim() || null,
         category:
           body.category?.trim() || null,
         supplier_id:
@@ -243,14 +331,19 @@ export async function PUT(
           body.presentation?.trim() || null,
         sku:
           body.sku?.trim() || null,
-        purchase_price: purchasePrice,
-        sale_price: salePrice,
-        minimum_stock: minimumStock,
-        maximum_stock: maximumStock,
+        purchase_price:
+          purchasePrice,
+        sale_price:
+          salePrice,
+        minimum_stock:
+          minimumStock,
+        maximum_stock:
+          maximumStock,
         updated_at:
           new Date().toISOString(),
       })
       .eq("id", id)
+      .eq("store_id", storeId)
       .select()
       .single();
 
@@ -272,7 +365,7 @@ export async function PUT(
     }
 
     /*
-     * Si el usuario modificó el stock,
+     * Si cambió el stock,
      * registramos el cambio como AJUSTE.
      */
     if (
@@ -298,11 +391,6 @@ export async function PUT(
           movementError
         );
 
-        /*
-         * Intentamos devolver un error claro.
-         * Los datos generales ya fueron actualizados,
-         * pero el stock no.
-         */
         return NextResponse.json(
           {
             error:

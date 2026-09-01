@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createClient as createServerSupabase } from "@/lib/supabase/server";
 
-function getSupabase() {
+function getSupabaseAdmin() {
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -27,18 +28,80 @@ function getSupabase() {
   );
 }
 
+async function getAuthenticatedUser() {
+  const supabase =
+    await createServerSupabase();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return null;
+  }
+
+  return user;
+}
+
+async function getUserStoreId(
+  userId: string
+) {
+  const supabase =
+    getSupabaseAdmin();
+
+  const { data, error } =
+    await supabase
+      .from("profiles")
+      .select("store_id")
+      .eq("id", userId)
+      .single();
+
+  if (error) {
+    throw new Error(
+      `No se pudo obtener el perfil: ${error.message}`
+    );
+  }
+
+  if (!data?.store_id) {
+    throw new Error(
+      "El usuario no tiene una tienda asignada."
+    );
+  }
+
+  return data.store_id;
+}
+
 export async function GET() {
   try {
-    const supabase = getSupabase();
+    const user =
+      await getAuthenticatedUser();
 
-    const { data, error } = await supabase
-      .from("suppliers")
-      .select(
-        "id, name, phone, email, created_at"
-      )
-      .order("created_at", {
-        ascending: false,
-      });
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const storeId =
+      await getUserStoreId(user.id);
+
+    const supabase =
+      getSupabaseAdmin();
+
+    const { data, error } =
+      await supabase
+        .from("suppliers")
+        .select(
+          "id, name, phone, email, created_at"
+        )
+        .eq("store_id", storeId)
+        .order("created_at", {
+          ascending: false,
+        });
 
     if (error) {
       console.error(
@@ -49,6 +112,9 @@ export async function GET() {
       return NextResponse.json(
         {
           error: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
         },
         { status: 400 }
       );
@@ -79,7 +145,20 @@ export async function POST(
   request: Request
 ) {
   try {
-    const body = await request.json();
+    const user =
+      await getAuthenticatedUser();
+
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const body =
+      await request.json();
 
     const name =
       typeof body.name === "string"
@@ -106,19 +185,25 @@ export async function POST(
       );
     }
 
-    const supabase = getSupabase();
+    const storeId =
+      await getUserStoreId(user.id);
 
-    const { data, error } = await supabase
-      .from("suppliers")
-      .insert({
-        name,
-        phone: phone || null,
-        email: email || null,
-      })
-      .select(
-        "id, name, phone, email, created_at"
-      )
-      .single();
+    const supabase =
+      getSupabaseAdmin();
+
+    const { data, error } =
+      await supabase
+        .from("suppliers")
+        .insert({
+          store_id: storeId,
+          name,
+          phone: phone || null,
+          email: email || null,
+        })
+        .select(
+          "id, name, phone, email, created_at"
+        )
+        .single();
 
     if (error) {
       console.error(
@@ -129,6 +214,9 @@ export async function POST(
       return NextResponse.json(
         {
           error: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
         },
         { status: 400 }
       );
