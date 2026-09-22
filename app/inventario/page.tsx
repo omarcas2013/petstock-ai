@@ -996,7 +996,7 @@ export default function InventarioPage() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={openInitialInventory}
@@ -1013,6 +1013,36 @@ export default function InventarioPage() {
             </Link>
 
             <Link
+              href="/inventario/entradas/compras"
+              className="inline-flex items-center justify-center rounded-lg border border-green-300 bg-green-50 px-5 py-3 font-medium text-green-700 hover:bg-green-100"
+            >
+              🛒 Compras
+            </Link>
+
+            {/* ALMACENAMIENTO */}
+
+            <Link
+              href="/inventario/almacenes"
+              className="inline-flex items-center justify-center rounded-lg border border-purple-300 bg-purple-50 px-5 py-3 font-medium text-purple-700 hover:bg-purple-100"
+            >
+              🏭 Almacenes
+            </Link>
+
+            <Link
+              href="/inventario/almacenes/sucursales"
+              className="inline-flex items-center justify-center rounded-lg border border-blue-300 bg-blue-50 px-5 py-3 font-medium text-blue-700 hover:bg-blue-100"
+            >
+              🏢 Sucursales
+            </Link>
+
+            <Link
+              href="/inventario/almacenes/traslados"
+              className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-indigo-50 px-5 py-3 font-medium text-indigo-700 hover:bg-indigo-100"
+            >
+              ↔ Traslados
+            </Link>
+
+            <Link
               href="/inventario/nuevo"
               className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
             >
@@ -1023,7 +1053,7 @@ export default function InventarioPage() {
 
         {/* TARJETAS */}
 
-        <div className="mb-6 grid gap-4 md:grid-cols-3">
+        <div className="mb-6 grid gap-4 md:grid-cols-4">
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
               Productos
@@ -1048,7 +1078,10 @@ export default function InventarioPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <Link
+            href="/inventario"
+            className="rounded-2xl bg-white p-5 shadow-sm transition hover:bg-yellow-50"
+          >
             <p className="text-sm text-gray-500">
               Stock bajo
             </p>
@@ -1062,7 +1095,34 @@ export default function InventarioPage() {
                 ).length
               }
             </p>
-          </div>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Requieren atención
+            </p>
+          </Link>
+
+          {/* ACCESO RÁPIDO A ALMACENES Y TRASLADOS */}
+
+          <Link
+            href="/inventario/almacenes"
+            className="rounded-2xl border border-purple-200 bg-purple-50 p-5 shadow-sm transition hover:border-purple-300 hover:bg-purple-100"
+          >
+            <p className="text-sm font-medium text-purple-700">
+              🏭 Almacenes
+            </p>
+
+            <p className="mt-2 text-xl font-bold text-purple-900">
+              Stock por ubicación
+            </p>
+
+            <p className="mt-1 text-sm text-purple-700">
+              Administra ubicaciones y traslada productos.
+            </p>
+
+            <p className="mt-3 text-sm font-semibold text-purple-800">
+              Gestionar →
+            </p>
+          </Link>
         </div>
 
         {/* BUSCADOR */}

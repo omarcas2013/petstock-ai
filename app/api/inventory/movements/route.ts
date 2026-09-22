@@ -26,6 +26,8 @@ export async function GET() {
         quantity,
         reason,
         created_at,
+        stock_before,
+        stock_after,
         products (
           name,
           sku
@@ -55,9 +57,7 @@ export async function GET() {
   }
 }
 
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
   try {
     const supabase = await createClient();
 

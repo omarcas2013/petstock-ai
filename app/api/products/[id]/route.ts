@@ -50,12 +50,14 @@ async function getUserStoreId(
   const supabase =
     getSupabaseAdmin();
 
-  const { data, error } =
-    await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", userId)
-      .single();
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("profiles")
+    .select("store_id")
+    .eq("id", userId)
+    .single();
 
   if (error) {
     throw new Error(
@@ -72,10 +74,113 @@ async function getUserStoreId(
   return data.store_id;
 }
 
+async function getUserRole() {
+  const supabase =
+    await createServerSupabase();
+
+  const {
+    data,
+    error,
+  } = await supabase.rpc(
+    "get_my_role"
+  );
+
+  if (error) {
+    throw new Error(
+      `No se pudo verificar el rol del usuario: ${error.message}`
+    );
+  }
+
+  return data as string | null;
+}
+
+function isProductManagerRole(
+  role: string | null
+) {
+  return [
+    "owner",
+    "admin",
+    "manager",
+  ].includes(role || "");
+}
+
+function normalizeText(
+  value: unknown
+) {
+  if (
+    typeof value !== "string"
+  ) {
+    return null;
+  }
+
+  const trimmed =
+    value.trim();
+
+  return trimmed || null;
+}
+
+function parseNonNegativeNumber(
+  value: unknown,
+  fallback = 0
+) {
+  if (
+    value === "" ||
+    value === null ||
+    value === undefined
+  ) {
+    return fallback;
+  }
+
+  const number =
+    Number(value);
+
+  if (
+    !Number.isFinite(number) ||
+    number < 0
+  ) {
+    return null;
+  }
+
+  return number;
+}
+
+function parseNonNegativeInteger(
+  value: unknown,
+  fallback = 0
+) {
+  if (
+    value === "" ||
+    value === null ||
+    value === undefined
+  ) {
+    return fallback;
+  }
+
+  const number =
+    Number(value);
+
+  if (
+    !Number.isInteger(number) ||
+    number < 0
+  ) {
+    return null;
+  }
+
+  return number;
+}
+
+/*
+|--------------------------------------------------------------------------
+| GET /api/products/[id]
+|--------------------------------------------------------------------------
+*/
+
 export async function GET(
   request: Request,
   context: {
-    params: Promise<{ id: string }>;
+    params: Promise<{
+      id: string;
+    }>;
   }
 ) {
   try {
@@ -85,7 +190,8 @@ export async function GET(
     if (!user) {
       return NextResponse.json(
         {
-          error: "No autenticado.",
+          error:
+            "No autenticado.",
         },
         { status: 401 }
       );
@@ -95,23 +201,37 @@ export async function GET(
       await context.params;
 
     const storeId =
-      await getUserStoreId(user.id);
+      await getUserStoreId(
+        user.id
+      );
 
     const supabase =
       getSupabaseAdmin();
 
-    const { data, error } =
-      await supabase
-        .from("products")
-        .select("*")
-        .eq("id", id)
-        .eq("store_id", storeId)
-        .single();
+    const {
+      data,
+      error,
+    } = await supabase
+      .from("products")
+      .select(`
+        *,
+        suppliers (
+          id,
+          name
+        )
+      `)
+      .eq("id", id)
+      .eq("store_id", storeId)
+      .single();
 
-    if (error || !data) {
+    if (
+      error ||
+      !data
+    ) {
       return NextResponse.json(
         {
-          error: "Producto no encontrado.",
+          error:
+            "Producto no encontrado.",
         },
         { status: 404 }
       );
@@ -138,10 +258,18 @@ export async function GET(
   }
 }
 
+/*
+|--------------------------------------------------------------------------
+| PUT /api/products/[id]
+|--------------------------------------------------------------------------
+*/
+
 export async function PUT(
   request: Request,
   context: {
-    params: Promise<{ id: string }>;
+    params: Promise<{
+      id: string;
+    }>;
   }
 ) {
   try {
@@ -151,9 +279,28 @@ export async function PUT(
     if (!user) {
       return NextResponse.json(
         {
-          error: "No autenticado.",
+          error:
+            "No autenticado.",
         },
         { status: 401 }
+      );
+    }
+
+    /*
+     * Validamos permisos.
+     */
+    const role =
+      await getUserRole();
+
+    if (
+      !isProductManagerRole(role)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "No tienes permisos para editar productos.",
+        },
+        { status: 403 }
       );
     }
 
@@ -164,15 +311,41 @@ export async function PUT(
       await request.json();
 
     const storeId =
-      await getUserStoreId(user.id);
+      await getUserStoreId(
+        user.id
+      );
 
     const supabase =
       getSupabaseAdmin();
 
     /*
-     * Obtenemos el producto únicamente
-     * si pertenece a la tienda del usuario.
-     */
+    |--------------------------------------------------------------------------
+    | PROTEGER STOCK
+    |--------------------------------------------------------------------------
+    |
+    | No permitimos enviar stock desde edición.
+    |
+    */
+
+    if (
+      body.stock !== undefined ||
+      body.newStock !== undefined
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "El stock no se modifica desde la edición del producto. Utiliza un movimiento de inventario.",
+        },
+        { status: 400 }
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRODUCTO ACTUAL
+    |--------------------------------------------------------------------------
+    */
+
     const {
       data: currentProduct,
       error: currentError,
@@ -189,17 +362,25 @@ export async function PUT(
     ) {
       return NextResponse.json(
         {
-          error: "Producto no encontrado.",
+          error:
+            "Producto no encontrado.",
         },
         { status: 404 }
       );
     }
 
     /*
-     * Validaciones básicas.
-     */
+    |--------------------------------------------------------------------------
+    | DATOS BÁSICOS
+    |--------------------------------------------------------------------------
+    */
 
-    if (!body.name?.trim()) {
+    const name =
+      normalizeText(
+        body.name
+      );
+
+    if (!name) {
       return NextResponse.json(
         {
           error:
@@ -209,27 +390,81 @@ export async function PUT(
       );
     }
 
+    const description =
+      normalizeText(
+        body.description
+      );
+
+    const brand =
+      normalizeText(
+        body.brand
+      );
+
+    const category =
+      normalizeText(
+        body.category
+      );
+
+    const subcategory =
+      normalizeText(
+        body.subcategory
+      );
+
+    const supplierId =
+      normalizeText(
+        body.supplier_id
+      );
+
+    const petType =
+      normalizeText(
+        body.pet_type
+      );
+
+    const presentation =
+      normalizeText(
+        body.presentation
+      );
+
+    const unitOfMeasure =
+      normalizeText(
+        body.unit_of_measure
+      ) || "unidad";
+
+    const sku =
+      normalizeText(
+        body.sku
+      );
+
+    const barcode =
+      normalizeText(
+        body.barcode
+      );
+
+    const imageUrl =
+      normalizeText(
+        body.image_url
+      );
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRECIOS
+    |--------------------------------------------------------------------------
+    */
+
     const purchasePrice =
-      Number(body.purchase_price);
+      parseNonNegativeNumber(
+        body.purchase_price,
+        0
+      );
 
     const salePrice =
-      Number(body.sale_price);
-
-    const minimumStock =
-      Number(body.minimum_stock);
-
-    const newStock =
-      Number(body.stock);
-
-    const maximumStock =
-      body.maximum_stock === "" ||
-      body.maximum_stock === null
-        ? null
-        : Number(body.maximum_stock);
+      parseNonNegativeNumber(
+        body.sale_price,
+        0
+      );
 
     if (
-      !Number.isFinite(purchasePrice) ||
-      purchasePrice < 0
+      purchasePrice === null
     ) {
       return NextResponse.json(
         {
@@ -241,8 +476,7 @@ export async function PUT(
     }
 
     if (
-      !Number.isFinite(salePrice) ||
-      salePrice < 0
+      salePrice === null
     ) {
       return NextResponse.json(
         {
@@ -253,22 +487,74 @@ export async function PUT(
       );
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | IMPUESTOS
+    |--------------------------------------------------------------------------
+    */
+
+    const taxType =
+      body.tax_type === "exento"
+        ? "exento"
+        : "porcentaje";
+
+    let taxRate =
+      parseNonNegativeNumber(
+        body.tax_rate,
+        0
+      );
+
     if (
-      !Number.isInteger(newStock) ||
-      newStock < 0
+      taxRate === null
     ) {
       return NextResponse.json(
         {
           error:
-            "El stock debe ser un número entero mayor o igual a 0.",
+            "La tasa de impuesto no es válida.",
         },
         { status: 400 }
       );
     }
 
     if (
-      !Number.isInteger(minimumStock) ||
-      minimumStock < 0
+      taxType === "exento"
+    ) {
+      taxRate = 0;
+    }
+
+    if (
+      taxRate < 0 ||
+      taxRate > 100
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "La tasa de impuesto debe estar entre 0 y 100.",
+        },
+        { status: 400 }
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | INVENTARIO
+    |--------------------------------------------------------------------------
+    */
+
+    const minimumStock =
+      parseNonNegativeInteger(
+        body.minimum_stock,
+        0
+      );
+
+    const reorderPoint =
+      parseNonNegativeInteger(
+        body.reorder_point,
+        0
+      );
+
+    if (
+      minimumStock === null
     ) {
       return NextResponse.json(
         {
@@ -280,65 +566,255 @@ export async function PUT(
     }
 
     if (
-      maximumStock !== null &&
-      (!Number.isInteger(maximumStock) ||
-        maximumStock < 0)
+      reorderPoint === null
     ) {
       return NextResponse.json(
         {
           error:
-            "El stock máximo no es válido.",
+            "El punto de reposición no es válido.",
         },
         { status: 400 }
       );
     }
 
+    let maximumStock:
+      number | null = null;
+
     if (
-      maximumStock !== null &&
-      maximumStock < minimumStock
+      body.maximum_stock !== "" &&
+      body.maximum_stock !== null &&
+      body.maximum_stock !== undefined
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "El stock máximo no puede ser menor que el stock mínimo.",
-        },
-        { status: 400 }
-      );
+      maximumStock =
+        parseNonNegativeInteger(
+          body.maximum_stock
+        );
+
+      if (
+        maximumStock === null
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "El stock máximo no es válido.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        maximumStock < minimumStock
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "El stock máximo no puede ser menor que el stock mínimo.",
+          },
+          { status: 400 }
+        );
+      }
     }
 
     /*
-     * Actualizamos solamente datos generales.
-     *
-     * IMPORTANTE:
-     * No actualizamos stock directamente aquí.
-     */
+    |--------------------------------------------------------------------------
+    | PROVEEDOR
+    |--------------------------------------------------------------------------
+    */
+
+    if (supplierId) {
+      const {
+        data: supplier,
+        error: supplierError,
+      } = await supabase
+        .from("suppliers")
+        .select("id")
+        .eq("id", supplierId)
+        .eq("store_id", storeId)
+        .maybeSingle();
+
+      if (supplierError) {
+        return NextResponse.json(
+          {
+            error:
+              supplierError.message,
+          },
+          { status: 400 }
+        );
+      }
+
+      if (!supplier) {
+        return NextResponse.json(
+          {
+            error:
+              "El proveedor no pertenece a tu tienda.",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDAR SKU
+    |--------------------------------------------------------------------------
+    */
+
+    if (sku) {
+      const {
+        data: existingSku,
+        error: skuError,
+      } = await supabase
+        .from("products")
+        .select("id, name")
+        .eq("store_id", storeId)
+        .eq("sku", sku)
+        .neq("id", id)
+        .maybeSingle();
+
+      if (skuError) {
+        return NextResponse.json(
+          {
+            error:
+              skuError.message,
+          },
+          { status: 400 }
+        );
+      }
+
+      if (existingSku) {
+        return NextResponse.json(
+          {
+            error:
+              "Este SKU ya está asignado a otro producto.",
+            product:
+              existingSku,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDAR BARCODE
+    |--------------------------------------------------------------------------
+    */
+
+    if (barcode) {
+      const {
+        data: existingBarcode,
+        error: barcodeError,
+      } = await supabase
+        .from("products")
+        .select("id, name")
+        .eq("store_id", storeId)
+        .eq("barcode", barcode)
+        .neq("id", id)
+        .maybeSingle();
+
+      if (barcodeError) {
+        return NextResponse.json(
+          {
+            error:
+              barcodeError.message,
+          },
+          { status: 400 }
+        );
+      }
+
+      if (existingBarcode) {
+        return NextResponse.json(
+          {
+            error:
+              "Este código de barras ya está asignado a otro producto.",
+            product:
+              existingBarcode,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ESTADO
+    |--------------------------------------------------------------------------
+    */
+
+    const isActive =
+      typeof body.is_active ===
+      "boolean"
+        ? body.is_active
+        : currentProduct.is_active;
+
+    /*
+    |--------------------------------------------------------------------------
+    | ACTUALIZAR PRODUCTO
+    |--------------------------------------------------------------------------
+    |
+    | OBSERVA:
+    | NO incluimos stock.
+    |
+    */
+
     const {
       data,
       error,
     } = await supabase
       .from("products")
       .update({
-        name: body.name.trim(),
-        brand:
-          body.brand?.trim() || null,
-        category:
-          body.category?.trim() || null,
+        name,
+
+        description,
+
+        brand,
+
+        category,
+
+        subcategory,
+
         supplier_id:
-          body.supplier_id || null,
+          supplierId,
+
         pet_type:
-          body.pet_type || null,
-        presentation:
-          body.presentation?.trim() || null,
-        sku:
-          body.sku?.trim() || null,
+          petType,
+
+        presentation,
+
+        unit_of_measure:
+          unitOfMeasure,
+
+        sku,
+
+        barcode,
+
         purchase_price:
           purchasePrice,
+
         sale_price:
           salePrice,
+
+        tax_rate:
+          taxRate,
+
+        tax_type:
+          taxType,
+
         minimum_stock:
           minimumStock,
+
         maximum_stock:
           maximumStock,
+
+        reorder_point:
+          reorderPoint,
+
+        is_active:
+          isActive,
+
+        image_url:
+          imageUrl,
+
         updated_at:
           new Date().toISOString(),
       })
@@ -353,65 +829,31 @@ export async function PUT(
         error
       );
 
-      return NextResponse.json(
-        {
-          error: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        },
-        { status: 400 }
-      );
-    }
-
-    /*
-     * Si cambió el stock,
-     * registramos el cambio como AJUSTE.
-     */
-    if (
-      newStock !== currentProduct.stock
-    ) {
-      const {
-        data: movement,
-        error: movementError,
-      } = await supabase.rpc(
-        "register_inventory_movement",
-        {
-          p_product_id: id,
-          p_movement_type: "ajuste",
-          p_quantity: newStock,
-          p_reason:
-            "Ajuste de stock desde edición de producto",
-        }
-      );
-
-      if (movementError) {
-        console.error(
-          "ERROR AJUSTANDO STOCK:",
-          movementError
-        );
-
+      if (
+        error.code === "23505"
+      ) {
         return NextResponse.json(
           {
             error:
-              "El producto se actualizó, pero no se pudo ajustar el stock.",
-            details:
-              movementError.message,
+              "El SKU o código de barras ya está asignado a otro producto.",
           },
-          { status: 400 }
+          { status: 409 }
         );
       }
 
-      return NextResponse.json({
-        ok: true,
-        message:
-          "Producto actualizado y stock ajustado correctamente.",
-        product: {
-          ...data,
-          stock: movement.stock_after,
+      return NextResponse.json(
+        {
+          error:
+            error.message,
+          details:
+            error.details,
+          hint:
+            error.hint,
+          code:
+            error.code,
         },
-        movement,
-      });
+        { status: 400 }
+      );
     }
 
     return NextResponse.json({

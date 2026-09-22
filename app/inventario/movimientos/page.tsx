@@ -123,9 +123,6 @@ export default function MovimientosPage() {
 
   /*
    * CARGA INICIAL
-   *
-   * Se mantiene fuera del cuerpo directo del efecto.
-   * El setTimeout evita la regla react-hooks/set-state-in-effect.
    */
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -182,6 +179,27 @@ export default function MovimientosPage() {
       );
     });
   }, [movements, search, typeFilter]);
+
+  /*
+   * CONTADORES
+   */
+  const movementCounts = useMemo(() => {
+    return {
+      total: filteredMovements.length,
+      entradas: filteredMovements.filter(
+        (movement) =>
+          movement.movement_type === "entrada"
+      ).length,
+      salidas: filteredMovements.filter(
+        (movement) =>
+          movement.movement_type === "salida"
+      ).length,
+      ajustes: filteredMovements.filter(
+        (movement) =>
+          movement.movement_type === "ajuste"
+      ).length,
+    };
+  }, [filteredMovements]);
 
   /*
    * FORMATEAR FECHA
@@ -255,6 +273,21 @@ export default function MovimientosPage() {
     }
 
     return movement.quantity.toString();
+  }
+
+  /*
+   * CLASE DE LA CANTIDAD
+   */
+  function getQuantityClass(type: MovementType) {
+    if (type === "entrada") {
+      return "text-green-700";
+    }
+
+    if (type === "salida") {
+      return "text-red-700";
+    }
+
+    return "text-blue-700";
   }
 
   /*
@@ -382,33 +415,40 @@ export default function MovimientosPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-100 p-6 md:p-10">
+    <main className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="mx-auto max-w-7xl">
 
         {/* ENCABEZADO */}
 
-        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm font-medium text-gray-500">
-              PetStock AI
+            <p className="text-sm font-semibold text-slate-500">
+              PetStock AI · Inventario
             </p>
 
-            <h1 className="mt-1 text-3xl font-bold text-gray-900">
+            <h1 className="mt-1 text-3xl font-bold text-slate-900">
               Movimientos de inventario
             </h1>
 
-            <p className="mt-2 text-gray-600">
-              Consulta y registra entradas,
-              salidas y ajustes de inventario.
+            <p className="mt-2 max-w-2xl text-slate-600">
+              Consulta el historial de entradas, salidas y
+              ajustes realizados en tu inventario.
             </p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <Link
               href="/inventario"
-              className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
+              className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
             >
-              ← Volver al inventario
+              ← Inventario
+            </Link>
+
+            <Link
+              href="/inventario/entradas/compras"
+              className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-50 px-5 py-3 font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+            >
+              🛒 Compras
             </Link>
 
             <button
@@ -417,29 +457,108 @@ export default function MovimientosPage() {
                 setFormError("");
                 setShowForm(true);
               }}
-              className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-slate-800"
             >
               + Nuevo movimiento
             </button>
           </div>
         </div>
 
+        {/* RESUMEN */}
+
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium text-slate-500">
+              Movimientos
+            </p>
+
+            <p className="mt-2 text-3xl font-bold text-slate-900">
+              {movementCounts.total}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+            <p className="text-sm font-medium text-green-700">
+              Entradas
+            </p>
+
+            <p className="mt-2 text-3xl font-bold text-green-800">
+              {movementCounts.entradas}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+            <p className="text-sm font-medium text-red-700">
+              Salidas
+            </p>
+
+            <p className="mt-2 text-3xl font-bold text-red-800">
+              {movementCounts.salidas}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+            <p className="text-sm font-medium text-blue-700">
+              Ajustes
+            </p>
+
+            <p className="mt-2 text-3xl font-bold text-blue-800">
+              {movementCounts.ajustes}
+            </p>
+          </div>
+        </div>
+
+        {/* INFORMACIÓN */}
+
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xl">
+              🔄
+            </div>
+
+            <div>
+              <h2 className="font-semibold text-slate-900">
+                Historial de inventario
+              </h2>
+
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Las recepciones de compras generan automáticamente
+                movimientos de entrada. Esta pantalla funciona como
+                historial y también permite registrar movimientos
+                manuales.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* FORMULARIO */}
 
         {showForm && (
-          <div className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
-            <div className="mb-5">
-              <h2 className="text-xl font-bold text-gray-900">
-                Nuevo movimiento
-              </h2>
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  Nuevo movimiento
+                </h2>
 
-              <p className="mt-1 text-sm text-gray-500">
-                Registra un cambio de inventario.
-              </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Registra manualmente un cambio de inventario.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeForm}
+                disabled={saving}
+                className="rounded-lg px-3 py-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                aria-label="Cerrar formulario"
+              >
+                ✕
+              </button>
             </div>
 
             {formError && (
-              <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                 {formError}
               </div>
             )}
@@ -453,7 +572,7 @@ export default function MovimientosPage() {
                 {/* PRODUCTO */}
 
                 <div>
-                  <label className="text-sm font-medium text-gray-700">
+                  <label className="text-sm font-medium text-slate-700">
                     Producto
                   </label>
 
@@ -465,7 +584,7 @@ export default function MovimientosPage() {
                     disabled={
                       loadingProducts || saving
                     }
-                    className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
                     <option value="">
                       {loadingProducts
@@ -491,7 +610,7 @@ export default function MovimientosPage() {
                 {/* TIPO */}
 
                 <div>
-                  <label className="text-sm font-medium text-gray-700">
+                  <label className="text-sm font-medium text-slate-700">
                     Tipo de movimiento
                   </label>
 
@@ -503,7 +622,7 @@ export default function MovimientosPage() {
                       )
                     }
                     disabled={saving}
-                    className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
                     <option value="entrada">
                       Entrada
@@ -522,7 +641,7 @@ export default function MovimientosPage() {
                 {/* CANTIDAD */}
 
                 <div>
-                  <label className="text-sm font-medium text-gray-700">
+                  <label className="text-sm font-medium text-slate-700">
                     {movementType === "ajuste"
                       ? "Nuevo stock"
                       : "Cantidad"}
@@ -542,13 +661,13 @@ export default function MovimientosPage() {
                         ? "Ej. 10"
                         : "Ej. 5"
                     }
-                    className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                    className="mt-2 w-full rounded-xl border border-slate-300 p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   />
 
                   {selectedProduct && (
-                    <p className="mt-2 text-sm text-gray-500">
+                    <p className="mt-2 text-sm text-slate-500">
                       Stock actual:{" "}
-                      <span className="font-semibold text-gray-700">
+                      <span className="font-semibold text-slate-700">
                         {selectedProduct.stock}
                       </span>
                     </p>
@@ -558,7 +677,7 @@ export default function MovimientosPage() {
                 {/* MOTIVO */}
 
                 <div>
-                  <label className="text-sm font-medium text-gray-700">
+                  <label className="text-sm font-medium text-slate-700">
                     Motivo
                   </label>
 
@@ -570,19 +689,28 @@ export default function MovimientosPage() {
                     }
                     disabled={saving}
                     placeholder="Ej. Conteo físico"
-                    className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                    className="mt-2 w-full rounded-xl border border-slate-300 p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   />
                 </div>
               </div>
 
+              {/* AVISO AJUSTE */}
+
+              {movementType === "ajuste" && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-700">
+                  En un ajuste debes indicar el stock final
+                  que debe tener el producto.
+                </div>
+              )}
+
               {/* BOTONES */}
 
-              <div className="flex justify-end gap-3 border-t pt-5">
+              <div className="flex justify-end gap-3 border-t border-slate-200 pt-5">
                 <button
                   type="button"
                   onClick={closeForm}
                   disabled={saving}
-                  className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="rounded-xl border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
@@ -590,7 +718,7 @@ export default function MovimientosPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-gray-900 px-5 py-3 font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving
                     ? "Guardando..."
@@ -603,11 +731,11 @@ export default function MovimientosPage() {
 
         {/* FILTROS */}
 
-        <div className="mb-6 rounded-2xl bg-white p-5 shadow-sm">
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="grid gap-5 md:grid-cols-2">
 
             <div>
-              <label className="text-sm font-medium text-gray-700">
+              <label className="text-sm font-medium text-slate-700">
                 Buscar
               </label>
 
@@ -618,12 +746,12 @@ export default function MovimientosPage() {
                   setSearch(event.target.value)
                 }
                 placeholder="Producto, SKU o motivo..."
-                className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+                className="mt-2 w-full rounded-xl border border-slate-300 p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-gray-700">
+              <label className="text-sm font-medium text-slate-700">
                 Tipo de movimiento
               </label>
 
@@ -636,7 +764,7 @@ export default function MovimientosPage() {
                       | MovementType
                   )
                 }
-                className="mt-2 w-full rounded-lg border border-gray-300 p-3"
+                className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               >
                 <option value="todos">
                   Todos
@@ -655,30 +783,52 @@ export default function MovimientosPage() {
                 </option>
               </select>
             </div>
-
           </div>
+
+          {(search || typeFilter !== "todos") && (
+            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
+              <p className="text-sm text-slate-500">
+                Filtros activos
+              </p>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setTypeFilter("todos");
+                }}
+                className="text-sm font-semibold text-slate-700 hover:underline"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          )}
         </div>
 
         {/* CONTADOR */}
 
-        <div className="mb-4">
-          <p className="text-sm text-gray-500">
-            Mostrando{" "}
-            <span className="font-semibold text-gray-700">
-              {filteredMovements.length}
-            </span>{" "}
-            movimiento
-            {filteredMovements.length !== 1
-              ? "s"
-              : ""}
-          </p>
-        </div>
+        {!loading && !error && (
+          <div className="mb-4">
+            <p className="text-sm text-slate-500">
+              Mostrando{" "}
+              <span className="font-semibold text-slate-700">
+                {filteredMovements.length}
+              </span>{" "}
+              movimiento
+              {filteredMovements.length !== 1
+                ? "s"
+                : ""}
+            </p>
+          </div>
+        )}
 
         {/* LOADING */}
 
         {loading && (
-          <div className="rounded-2xl bg-white p-10 text-center shadow-sm">
-            <p className="text-gray-500">
+          <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-700" />
+
+            <p className="text-slate-500">
               Cargando movimientos...
             </p>
           </div>
@@ -687,8 +837,8 @@ export default function MovimientosPage() {
         {/* ERROR */}
 
         {error && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">
-            <p className="font-medium">
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
+            <p className="font-semibold">
               Error cargando movimientos
             </p>
 
@@ -701,7 +851,7 @@ export default function MovimientosPage() {
               onClick={() => {
                 void loadMovements();
               }}
-              className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white"
+              className="mt-4 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
             >
               Intentar nuevamente
             </button>
@@ -711,93 +861,108 @@ export default function MovimientosPage() {
         {/* TABLA */}
 
         {!loading && !error && (
-          <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
             {filteredMovements.length === 0 ? (
               <div className="p-12 text-center">
 
-                <div className="text-4xl">
+                <div className="text-5xl">
                   📦
                 </div>
 
-                <p className="mt-4 font-medium text-gray-700">
+                <p className="mt-4 font-semibold text-slate-700">
                   No encontramos movimientos.
                 </p>
 
-                <p className="mt-1 text-sm text-gray-500">
-                  Prueba cambiando los filtros.
+                <p className="mt-1 text-sm text-slate-500">
+                  {movements.length === 0
+                    ? "Cuando registres una entrada, salida o ajuste aparecerá aquí."
+                    : "Prueba cambiando los filtros de búsqueda."}
                 </p>
+
+                {movements.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormError("");
+                      setShowForm(true);
+                    }}
+                    className="mt-5 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+                  >
+                    + Registrar movimiento
+                  </button>
+                )}
 
               </div>
             ) : (
               <div className="overflow-x-auto">
 
-                <table className="w-full min-w-[900px]">
+                <table className="w-full min-w-[1000px]">
 
-                  <thead className="border-b bg-gray-50">
-                    <tr className="text-left text-sm text-gray-500">
+                  <thead className="border-b border-slate-200 bg-slate-50">
+                    <tr className="text-left text-sm text-slate-500">
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         Fecha
                       </th>
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         Producto
                       </th>
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         SKU
                       </th>
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         Tipo
                       </th>
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         Cantidad
                       </th>
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         Stock
                       </th>
 
-                      <th className="px-5 py-4 font-medium">
+                      <th className="px-5 py-4 font-semibold">
                         Motivo
                       </th>
 
                     </tr>
                   </thead>
 
-                  <tbody className="divide-y">
+                  <tbody className="divide-y divide-slate-100">
 
                     {filteredMovements.map(
                       (movement) => (
                         <tr
                           key={movement.id}
-                          className="hover:bg-gray-50"
+                          className="transition hover:bg-slate-50"
                         >
 
-                          <td className="px-5 py-4 text-sm text-gray-600">
+                          <td className="px-5 py-4 text-sm text-slate-600">
                             {formatDate(
                               movement.created_at
                             )}
                           </td>
 
                           <td className="px-5 py-4">
-                            <div className="font-medium text-gray-900">
+                            <div className="font-semibold text-slate-900">
                               {movement.products?.name ||
-                                "—"}
+                                "Producto desconocido"}
                             </div>
                           </td>
 
-                          <td className="px-5 py-4 font-mono text-sm text-gray-600">
+                          <td className="px-5 py-4 font-mono text-sm text-slate-600">
                             {movement.products?.sku ||
                               "—"}
                           </td>
 
                           <td className="px-5 py-4">
                             <span
-                              className={`rounded-full px-3 py-1 text-xs font-medium ${getTypeClass(
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getTypeClass(
                                 movement.movement_type
                               )}`}
                             >
@@ -807,8 +972,14 @@ export default function MovimientosPage() {
                             </span>
                           </td>
 
-                          <td className="px-5 py-4 font-semibold">
-                            {getQuantity(movement)}
+                          <td className="px-5 py-4">
+                            <span
+                              className={`font-bold ${getQuantityClass(
+                                movement.movement_type
+                              )}`}
+                            >
+                              {getQuantity(movement)}
+                            </span>
                           </td>
 
                           <td className="px-5 py-4 text-sm">
@@ -816,19 +987,27 @@ export default function MovimientosPage() {
                               null &&
                             movement.stock_after !==
                               null ? (
-                              <span className="font-medium text-gray-700">
-                                {movement.stock_before}{" "}
-                                →{" "}
-                                {movement.stock_after}
-                              </span>
+                              <div className="flex items-center gap-2 font-semibold text-slate-700">
+                                <span>
+                                  {movement.stock_before}
+                                </span>
+
+                                <span className="text-slate-400">
+                                  →
+                                </span>
+
+                                <span>
+                                  {movement.stock_after}
+                                </span>
+                              </div>
                             ) : (
-                              <span className="text-gray-400">
+                              <span className="text-slate-400">
                                 —
                               </span>
                             )}
                           </td>
 
-                          <td className="px-5 py-4 text-gray-700">
+                          <td className="px-5 py-4 text-sm text-slate-700">
                             {movement.reason || "—"}
                           </td>
 

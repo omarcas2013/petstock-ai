@@ -36,9 +36,8 @@ export default function InventarioCargaPage() {
   const [mode, setMode] =
     useState<"manual" | "archivo">("manual");
 
-  const [products, setProducts] = useState<Product[]>(
-    []
-  );
+  const [products, setProducts] =
+    useState<Product[]>([]);
 
   const [loadingProducts, setLoadingProducts] =
     useState(false);
@@ -72,6 +71,9 @@ export default function InventarioCargaPage() {
     useState("Inventario inicial");
 
   const [message, setMessage] = useState("");
+
+  const [applying, setApplying] =
+    useState(false);
 
   function formatNumber(value: number) {
     return new Intl.NumberFormat("es-CO").format(
@@ -244,7 +246,10 @@ export default function InventarioCargaPage() {
 
         let error: string | null = null;
 
-        if (
+        if (!product.sku) {
+          error =
+            "Este producto no tiene SKU y no puede ser enviado al cargue.";
+        } else if (
           rawQuantity === "" ||
           !Number.isInteger(quantity)
         ) {
@@ -260,9 +265,10 @@ export default function InventarioCargaPage() {
           product,
           sku: product.sku || "",
           barcode: product.barcode || "",
-          quantity: error
-            ? null
-            : quantity,
+          quantity:
+            error === null
+              ? quantity
+              : null,
           reason:
             reasons[product.id] ||
             globalReason,
@@ -315,6 +321,7 @@ export default function InventarioCargaPage() {
         );
 
         current = "";
+
         continue;
       }
 
@@ -385,20 +392,25 @@ export default function InventarioCargaPage() {
 
         return {
           row: index + 2,
+
           sku:
             skuIndex >= 0
               ? columns[skuIndex] || ""
               : "",
+
           barcode:
             barcodeIndex >= 0
               ? columns[barcodeIndex] || ""
               : "",
+
           name:
             nameIndex >= 0
               ? columns[nameIndex] || ""
               : "",
+
           quantity:
             columns[quantityIndex] || "",
+
           reason:
             reasonIndex >= 0
               ? columns[reasonIndex] ||
@@ -522,6 +534,9 @@ export default function InventarioCargaPage() {
         if (!product) {
           error =
             "No se encontró el producto.";
+        } else if (!product.sku) {
+          error =
+            "El producto encontrado no tiene SKU.";
         }
 
         const quantity =
@@ -540,19 +555,28 @@ export default function InventarioCargaPage() {
 
         return {
           row: row.row,
+
           product,
-          sku: row.sku,
-          barcode: row.barcode,
+
+          sku:
+            row.sku ||
+            product?.sku ||
+            "",
+
+          barcode:
+            row.barcode ||
+            product?.barcode ||
+            "",
+
           quantity:
-            error &&
-            !Number.isInteger(quantity)
-              ? null
-              : quantity >= 0
+            error === null
               ? quantity
               : null,
+
           reason:
             row.reason ||
             globalReason,
+
           error,
         };
       });
@@ -577,14 +601,16 @@ export default function InventarioCargaPage() {
   const totalCurrentStock =
     validPreviewRows.reduce(
       (sum, row) =>
-        sum + (row.product?.stock || 0),
+        sum +
+        (row.product?.stock || 0),
       0
     );
 
   const totalNewStock =
     validPreviewRows.reduce(
       (sum, row) =>
-        sum + (row.quantity || 0),
+        sum +
+        (row.quantity || 0),
       0
     );
 
@@ -593,15 +619,126 @@ export default function InventarioCargaPage() {
     totalCurrentStock;
 
   function closePreview() {
+    if (applying) {
+      return;
+    }
+
     setPreviewOpen(false);
   }
 
-  function handleApply() {
-    setMessage(
-      "La vista previa está lista. La conexión con la API de aplicación masiva será el siguiente paso."
-    );
+  async function handleApply() {
+    if (applying) {
+      return;
+    }
 
-    setPreviewOpen(false);
+    setMessage("");
+
+    if (validPreviewRows.length === 0) {
+      setMessage(
+        "No hay productos válidos para aplicar."
+      );
+      return;
+    }
+
+    if (invalidPreviewRows.length > 0) {
+      setMessage(
+        "Corrige los errores antes de aplicar el ajuste."
+      );
+      return;
+    }
+
+    try {
+      setApplying(true);
+
+      const items = validPreviewRows.map(
+        (row) => ({
+          sku:
+            row.product?.sku ||
+            row.sku,
+
+          quantity:
+            row.quantity,
+
+          reason:
+            row.reason ||
+            globalReason ||
+            "Inventario inicial",
+        })
+      );
+
+      const response = await fetch(
+        "/api/inventory/initial-load",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            items,
+          }),
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        const details =
+          Array.isArray(
+            result.details
+          )
+            ? ` ${result.details.join(
+                " "
+              )}`
+            : "";
+
+        throw new Error(
+          `${
+            result.error ||
+            "No se pudo aplicar el inventario."
+          }${details}`
+        );
+      }
+
+      setPreviewOpen(false);
+
+      setSelectedProducts([]);
+
+      setQuantities({});
+
+      setReasons({});
+
+      setPreviewRows([]);
+
+      setImportRows([]);
+
+      setFileName("");
+
+      setSearch("");
+
+      setMessage(
+        result.message ||
+          `Inventario actualizado correctamente. ${items.length} producto(s) procesado(s).`
+      );
+
+      await loadProducts();
+    } catch (error) {
+      console.error(
+        "Error aplicando inventario:",
+        error
+      );
+
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo aplicar el inventario."
+      );
+    } finally {
+      setApplying(false);
+    }
   }
 
   return (
@@ -786,6 +923,7 @@ export default function InventarioCargaPage() {
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+
                 {filteredProducts
                   .slice(0, 30)
                   .map((product) => {
@@ -808,6 +946,7 @@ export default function InventarioCargaPage() {
                         }
                         className="rounded-xl border border-gray-200 p-4 text-left hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:opacity-60"
                       >
+
                         <div className="flex items-start justify-between gap-3">
 
                           <div>
@@ -860,7 +999,7 @@ export default function InventarioCargaPage() {
                   })}
 
                 {filteredProducts.length === 0 && (
-                  <div className="md:col-span-2 xl:col-span-3 rounded-xl bg-gray-50 p-8 text-center text-gray-500">
+                  <div className="rounded-xl bg-gray-50 p-8 text-center text-gray-500 md:col-span-2 xl:col-span-3">
                     No encontramos productos.
                   </div>
                 )}
@@ -873,6 +1012,7 @@ export default function InventarioCargaPage() {
             <div className="mt-8 border-t pt-6">
 
               <div className="mb-4 flex items-center justify-between">
+
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">
                     Productos seleccionados
@@ -882,11 +1022,13 @@ export default function InventarioCargaPage() {
                     {selectedProducts.length} producto(s)
                   </p>
                 </div>
+
               </div>
 
               {selectedProducts.length ===
               0 ? (
                 <div className="rounded-xl bg-gray-50 p-8 text-center">
+
                   <p className="font-medium text-gray-700">
                     Todavía no has seleccionado productos.
                   </p>
@@ -894,6 +1036,7 @@ export default function InventarioCargaPage() {
                   <p className="mt-1 text-sm text-gray-500">
                     Utiliza el buscador de arriba.
                   </p>
+
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -901,6 +1044,7 @@ export default function InventarioCargaPage() {
                   <table className="w-full min-w-[850px]">
 
                     <thead className="bg-gray-50">
+
                       <tr className="text-left text-sm text-gray-500">
 
                         <th className="px-4 py-3 font-medium">
@@ -924,6 +1068,7 @@ export default function InventarioCargaPage() {
                         </th>
 
                       </tr>
+
                     </thead>
 
                     <tbody className="divide-y">
@@ -933,6 +1078,7 @@ export default function InventarioCargaPage() {
                           <tr key={product.id}>
 
                             <td className="px-4 py-4">
+
                               <div className="font-medium text-gray-900">
                                 {product.name}
                               </div>
@@ -942,10 +1088,13 @@ export default function InventarioCargaPage() {
                                   product.barcode ||
                                   "Sin identificador"}
                               </div>
+
                             </td>
 
                             <td className="px-4 py-4 font-semibold">
-                              {product.stock}
+                              {formatNumber(
+                                product.stock
+                              )}
                             </td>
 
                             <td className="px-4 py-4">
@@ -1152,6 +1301,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                   <table className="w-full min-w-[700px]">
 
                     <thead className="bg-gray-50">
+
                       <tr className="text-left text-sm text-gray-500">
 
                         <th className="px-4 py-3 font-medium">
@@ -1175,6 +1325,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                         </th>
 
                       </tr>
+
                     </thead>
 
                     <tbody className="divide-y">
@@ -1189,18 +1340,15 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                             </td>
 
                             <td className="px-4 py-3 font-mono text-sm">
-                              {row.sku ||
-                                "—"}
+                              {row.sku || "—"}
                             </td>
 
                             <td className="px-4 py-3 font-mono text-sm">
-                              {row.barcode ||
-                                "—"}
+                              {row.barcode || "—"}
                             </td>
 
                             <td className="px-4 py-3">
-                              {row.name ||
-                                "—"}
+                              {row.name || "—"}
                             </td>
 
                             <td className="px-4 py-3 font-semibold">
@@ -1231,12 +1379,14 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
           </section>
         )}
 
-        {/* PREVIEW */}
+        {/* PREVIEW / MODAL */}
 
         {previewOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
 
             <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white shadow-xl">
+
+              {/* CABECERA DEL MODAL */}
 
               <div className="sticky top-0 border-b bg-white px-6 py-5">
 
@@ -1262,7 +1412,8 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                     onClick={
                       closePreview
                     }
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50"
+                    disabled={applying}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Cerrar
                   </button>
@@ -1276,6 +1427,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
               <div className="grid gap-4 p-6 md:grid-cols-4">
 
                 <div className="rounded-xl bg-gray-50 p-4">
+
                   <p className="text-sm text-gray-500">
                     Registros
                   </p>
@@ -1283,9 +1435,11 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                   <p className="mt-1 text-2xl font-bold">
                     {previewRows.length}
                   </p>
+
                 </div>
 
                 <div className="rounded-xl bg-green-50 p-4">
+
                   <p className="text-sm text-green-700">
                     Válidos
                   </p>
@@ -1293,9 +1447,11 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                   <p className="mt-1 text-2xl font-bold text-green-800">
                     {validPreviewRows.length}
                   </p>
+
                 </div>
 
                 <div className="rounded-xl bg-red-50 p-4">
+
                   <p className="text-sm text-red-700">
                     Con errores
                   </p>
@@ -1303,9 +1459,11 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                   <p className="mt-1 text-2xl font-bold text-red-800">
                     {invalidPreviewRows.length}
                   </p>
+
                 </div>
 
                 <div className="rounded-xl bg-blue-50 p-4">
+
                   <p className="text-sm text-blue-700">
                     Diferencia
                   </p>
@@ -1319,11 +1477,12 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                       totalDifference
                     )}
                   </p>
+
                 </div>
 
               </div>
 
-              {/* TABLA */}
+              {/* TABLA DEL MODAL */}
 
               <div className="px-6 pb-6">
 
@@ -1332,6 +1491,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                   <table className="w-full min-w-[1000px]">
 
                     <thead className="bg-gray-50">
+
                       <tr className="text-left text-sm text-gray-500">
 
                         <th className="px-4 py-3 font-medium">
@@ -1363,6 +1523,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                         </th>
 
                       </tr>
+
                     </thead>
 
                     <tbody className="divide-y">
@@ -1485,7 +1646,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
 
               </div>
 
-              {/* FOOTER */}
+              {/* FOOTER DEL MODAL */}
 
               <div className="sticky bottom-0 border-t bg-white px-6 py-5">
 
@@ -1520,7 +1681,8 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                       onClick={
                         closePreview
                       }
-                      className="rounded-lg border border-gray-300 px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
+                      disabled={applying}
+                      className="rounded-lg border border-gray-300 px-5 py-3 font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Volver
                     </button>
@@ -1528,6 +1690,7 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                     <button
                       type="button"
                       disabled={
+                        applying ||
                         validPreviewRows.length ===
                           0 ||
                         invalidPreviewRows.length >
@@ -1538,7 +1701,9 @@ CAT-002,7701234567891,Alimento Gato,15,Inventario inicial`}
                       }
                       className="rounded-lg bg-gray-900 px-6 py-3 font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Aplicar ajuste
+                      {applying
+                        ? "Aplicando..."
+                        : "Aplicar ajuste"}
                     </button>
 
                   </div>
