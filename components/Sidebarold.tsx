@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -45,15 +45,8 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
 
-  /*
-   * En celular arranca ABIERTO a propósito: al cargar la aplicación,
-   * lo primero que se ve es el menú completo (no el contenido de la
-   * página), y solo se cierra cuando el cliente elige una opción.
-   * En escritorio no aplica ("lg:translate-x-0" ya lo deja siempre
-   * visible y fijo, sin depender de este estado).
-   */
   const [mobileOpen, setMobileOpen] =
-    useState(true);
+    useState(false);
 
   const [loggingOut, setLoggingOut] =
     useState(false);
