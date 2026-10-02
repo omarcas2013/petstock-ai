@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import {
+  INVENTORY_MANAGER_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type InventoryMode =
   | "global"
@@ -24,64 +29,23 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await createClient();
+    const auth = await requireUser();
 
-    // =======================================================
-    // AUTENTICACIÓN
-    // =======================================================
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    // =======================================================
-    // PERFIL / TIENDA
-    // =======================================================
-
-    const {
-      data: profile,
-      error: profileError,
-    } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .single();
-
-    if (
-      profileError ||
-      !profile?.store_id
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No se encontró la tienda del usuario",
-        },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     // =======================================================
     // VALIDAR ID DE COMPRA
     // =======================================================
 
-    const { id: purchaseId } =
-      await context.params;
+    const { id: purchaseId } = await context.params;
 
     if (!purchaseId) {
       return NextResponse.json(
-        {
-          error: "ID de compra requerido",
-        },
+        { error: "ID de compra requerido" },
         { status: 400 }
       );
     }
@@ -90,21 +54,13 @@ export async function GET(
     // OBTENER CONFIGURACIÓN DE INVENTARIO
     // =======================================================
 
-    const {
-      data: store,
-      error: storeError,
-    } = await supabase
+    const { data: store, error: storeError } = await supabase
       .from("stores")
-      .select(
-        "id, name, inventory_mode"
-      )
+      .select("id, name, inventory_mode")
       .eq("id", profile.store_id)
       .single();
 
-    if (
-      storeError ||
-      !store
-    ) {
+    if (storeError || !store) {
       console.error(
         "Error obteniendo configuración de inventario:",
         storeError
@@ -119,16 +75,12 @@ export async function GET(
       );
     }
 
-    const inventoryMode =
-      store.inventory_mode as InventoryMode;
+    const inventoryMode = store.inventory_mode as InventoryMode;
 
     if (
-      ![
-        "global",
-        "branch",
-        "warehouse",
-        "location",
-      ].includes(inventoryMode)
+      !["global", "branch", "warehouse", "location"].includes(
+        inventoryMode
+      )
     ) {
       return NextResponse.json(
         {
@@ -160,10 +112,7 @@ export async function GET(
     );
 
     return NextResponse.json(
-      {
-        error:
-          "Error interno del servidor",
-      },
+      { error: "Error interno del servidor" },
       { status: 500 }
     );
   }
@@ -192,51 +141,13 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
-    // =======================================================
-    // AUTENTICACIÓN
-    // =======================================================
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    // =======================================================
-    // PERFIL / TIENDA
-    // =======================================================
-
-    const {
-      data: profile,
-      error: profileError,
-    } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .single();
-
-    if (
-      profileError ||
-      !profile?.store_id
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No se encontró la tienda del usuario",
-        },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const storeId = profile.store_id;
 
@@ -244,14 +155,11 @@ export async function POST(
     // COMPRA
     // =======================================================
 
-    const { id: purchaseId } =
-      await context.params;
+    const { id: purchaseId } = await context.params;
 
     if (!purchaseId) {
       return NextResponse.json(
-        {
-          error: "ID de compra requerido",
-        },
+        { error: "ID de compra requerido" },
         { status: 400 }
       );
     }
@@ -260,21 +168,13 @@ export async function POST(
     // OBTENER MODALIDAD DE INVENTARIO
     // =======================================================
 
-    const {
-      data: store,
-      error: storeError,
-    } = await supabase
+    const { data: store, error: storeError } = await supabase
       .from("stores")
-      .select(
-        "id, name, inventory_mode"
-      )
+      .select("id, name, inventory_mode")
       .eq("id", storeId)
       .single();
 
-    if (
-      storeError ||
-      !store
-    ) {
+    if (storeError || !store) {
       console.error(
         "Error obteniendo configuración de inventario:",
         storeError
@@ -289,16 +189,12 @@ export async function POST(
       );
     }
 
-    const inventoryMode =
-      store.inventory_mode as InventoryMode;
+    const inventoryMode = store.inventory_mode as InventoryMode;
 
     if (
-      ![
-        "global",
-        "branch",
-        "warehouse",
-        "location",
-      ].includes(inventoryMode)
+      !["global", "branch", "warehouse", "location"].includes(
+        inventoryMode
+      )
     ) {
       return NextResponse.json(
         {
@@ -344,14 +240,8 @@ export async function POST(
     // VALIDAR DESTINO SEGÚN MODALIDAD
     // =======================================================
 
-    if (
-      inventoryMode === "global"
-    ) {
-      if (
-        branchId ||
-        warehouseId ||
-        locationId
-      ) {
+    if (inventoryMode === "global") {
+      if (branchId || warehouseId || locationId) {
         return NextResponse.json(
           {
             error:
@@ -362,9 +252,7 @@ export async function POST(
       }
     }
 
-    if (
-      inventoryMode === "branch"
-    ) {
+    if (inventoryMode === "branch") {
       if (!branchId) {
         return NextResponse.json(
           {
@@ -375,10 +263,7 @@ export async function POST(
         );
       }
 
-      if (
-        warehouseId ||
-        locationId
-      ) {
+      if (warehouseId || locationId) {
         return NextResponse.json(
           {
             error:
@@ -389,9 +274,7 @@ export async function POST(
       }
     }
 
-    if (
-      inventoryMode === "warehouse"
-    ) {
+    if (inventoryMode === "warehouse") {
       if (!warehouseId) {
         return NextResponse.json(
           {
@@ -402,10 +285,7 @@ export async function POST(
         );
       }
 
-      if (
-        branchId ||
-        locationId
-      ) {
+      if (branchId || locationId) {
         return NextResponse.json(
           {
             error:
@@ -416,13 +296,8 @@ export async function POST(
       }
     }
 
-    if (
-      inventoryMode === "location"
-    ) {
-      if (
-        !warehouseId ||
-        !locationId
-      ) {
+    if (inventoryMode === "location") {
+      if (!warehouseId || !locationId) {
         return NextResponse.json(
           {
             error:
@@ -447,10 +322,7 @@ export async function POST(
     // LLAMAR RPC
     // =======================================================
 
-    const {
-      data,
-      error,
-    } = await supabase.rpc(
+    const { data, error } = await supabase.rpc(
       "receive_purchase_at_scope",
       {
         p_store_id: storeId,
@@ -463,16 +335,14 @@ export async function POST(
     );
 
     if (error) {
-      console.error(
-        "Error recibiendo compra:",
-        error
-      );
+      console.error("Error recibiendo compra:", error);
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo registrar la recepción de la compra.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar la recepción de la compra."
+          ),
         },
         { status: 400 }
       );
@@ -484,10 +354,8 @@ export async function POST(
 
     return NextResponse.json({
       ok: true,
-      localized:
-        inventoryMode !== "global",
-      inventory_mode:
-        inventoryMode,
+      localized: inventoryMode !== "global",
+      inventory_mode: inventoryMode,
       receipt: data,
     });
   } catch (error) {
@@ -497,10 +365,7 @@ export async function POST(
     );
 
     return NextResponse.json(
-      {
-        error:
-          "Error interno del servidor",
-      },
+      { error: "Error interno del servidor" },
       { status: 500 }
     );
   }

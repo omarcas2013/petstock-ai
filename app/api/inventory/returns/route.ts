@@ -1,35 +1,16 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 export async function GET() {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(SALES_ROLES);
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado." },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .single();
-
-    if (profileError || !profile?.store_id) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario." },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const { data: returns, error } = await supabase
       .from("customer_returns")
@@ -45,6 +26,8 @@ export async function GET() {
           product_id,
           sale_item_id,
           quantity,
+          unit_price,
+          subtotal,
           created_at,
           products (
             name,
@@ -59,20 +42,19 @@ export async function GET() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error(
-        "Error cargando devoluciones:",
-        error
-      );
+      console.error("Error cargando devoluciones:", error);
 
       return NextResponse.json(
-        { error: error.message },
+        { error: "No se pudieron cargar las devoluciones." },
         { status: 500 }
       );
     }
 
     /*
-     * customer_return_items no guarda precio:
-     * lo tomamos de la línea de venta original.
+     * La migración 20261002120100_devoluciones agregó unit_price y
+     * subtotal a customer_return_items y rellenó las filas existentes
+     * desde sale_items. Si alguna fila quedara sin backfill, calculamos
+     * el valor desde la línea de venta original como respaldo.
      */
     const returnsWithPrices = (returns ?? []).map(
       (customerReturn) => ({
@@ -84,14 +66,22 @@ export async function GET() {
             ? sale_items[0]
             : sale_items;
 
-          const unitPrice = Number(
-            saleItem?.unit_price ?? 0
-          );
+          const unitPrice =
+            item.unit_price !== null &&
+            item.unit_price !== undefined
+              ? Number(item.unit_price)
+              : Number(saleItem?.unit_price ?? 0);
+
+          const subtotal =
+            item.subtotal !== null &&
+            item.subtotal !== undefined
+              ? Number(item.subtotal)
+              : unitPrice * item.quantity;
 
           return {
             ...item,
             unit_price: unitPrice,
-            subtotal: unitPrice * item.quantity,
+            subtotal,
           };
         }),
       })
@@ -101,10 +91,7 @@ export async function GET() {
       returns: returnsWithPrices,
     });
   } catch (error) {
-    console.error(
-      "Error GET /api/inventory/returns:",
-      error
-    );
+    console.error("Error GET /api/inventory/returns:", error);
 
     return NextResponse.json(
       { error: "Error interno del servidor." },
@@ -115,42 +102,26 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(SALES_ROLES);
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado." },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .single();
+    const { supabase, profile } = auth;
 
-    if (profileError || !profile?.store_id) {
+    let body: Record<string, unknown>;
+
+    try {
+      body = await request.json();
+    } catch {
       return NextResponse.json(
-        { error: "No se encontró la tienda del usuario." },
+        { error: "El cuerpo de la solicitud no es JSON válido." },
         { status: 400 }
       );
     }
 
-    const body = await request.json();
-
-    const {
-      sale_id,
-      sale_item_id,
-      quantity,
-      reason,
-    } = body;
+    const { sale_id, sale_item_id, quantity, reason } = body;
 
     if (!sale_id) {
       return NextResponse.json(
@@ -167,6 +138,7 @@ export async function POST(request: Request) {
     }
 
     if (
+      typeof quantity !== "number" ||
       !Number.isInteger(quantity) ||
       quantity <= 0
     ) {
@@ -183,15 +155,12 @@ export async function POST(request: Request) {
      * Verificar que la venta pertenece
      * a la tienda del usuario.
      */
-    const { data: sale, error: saleError } =
-      await supabase
-        .from("sales")
-        .select(
-          "id, store_id, customer_name"
-        )
-        .eq("id", sale_id)
-        .eq("store_id", profile.store_id)
-        .single();
+    const { data: sale, error: saleError } = await supabase
+      .from("sales")
+      .select("id, store_id, customer_name")
+      .eq("id", sale_id)
+      .eq("store_id", profile.store_id)
+      .single();
 
     if (saleError || !sale) {
       return NextResponse.json(
@@ -240,15 +209,9 @@ export async function POST(request: Request) {
       ? saleItem.products[0]
       : saleItem.products;
 
-    if (
-      !product ||
-      product.store_id !== profile.store_id
-    ) {
+    if (!product || product.store_id !== profile.store_id) {
       return NextResponse.json(
-        {
-          error:
-            "Producto no encontrado en tu tienda.",
-        },
+        { error: "Producto no encontrado en tu tienda." },
         { status: 404 }
       );
     }
@@ -258,6 +221,7 @@ export async function POST(request: Request) {
      * la función PostgreSQL.
      *
      * La función:
+     * - valida sesión, tienda y rol (assert_store_role)
      * - valida la cantidad
      * - evita devolver más de lo vendido
      * - crea la devolución
@@ -265,16 +229,14 @@ export async function POST(request: Request) {
      * - crea el movimiento de entrada
      */
     const { data: result, error: rpcError } =
-      await supabase.rpc(
-        "register_customer_return",
-        {
-          p_store_id: profile.store_id,
-          p_sale_id: sale_id,
-          p_sale_item_id: sale_item_id,
-          p_quantity: quantity,
-          p_reason: reason || null,
-        }
-      );
+      await supabase.rpc("register_customer_return", {
+        p_store_id: profile.store_id,
+        p_sale_id: sale_id,
+        p_sale_item_id: sale_item_id,
+        p_quantity: quantity,
+        p_reason:
+          typeof reason === "string" ? reason : null,
+      });
 
     if (rpcError) {
       console.error(
@@ -284,9 +246,10 @@ export async function POST(request: Request) {
 
       return NextResponse.json(
         {
-          error:
-            rpcError.message ||
-            "No se pudo registrar la devolución.",
+          error: rpcErrorMessage(
+            rpcError,
+            "No se pudo registrar la devolución."
+          ),
         },
         { status: 400 }
       );

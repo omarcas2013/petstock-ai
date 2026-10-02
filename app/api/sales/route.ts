@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetch-all";
+import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type SaleItemInput = {
   product_id: string;
@@ -15,42 +16,13 @@ type CreateSaleBody = {
 
 export async function GET() {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(SALES_ROLES);
 
-    // ==========================================================
-    // USUARIO AUTENTICADO
-    // ==========================================================
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    // ==========================================================
-    // OBTENER TIENDA DEL USUARIO
-    // ==========================================================
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .single();
-
-    if (profileError || !profile?.store_id) {
-      console.error("Error obteniendo tienda del usuario:", profileError);
-
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario" },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     // ==========================================================
     // OBTENER VENTAS
@@ -58,9 +30,9 @@ export async function GET() {
 
     const { data, error } = await fetchAllRows((from, to) =>
       supabase
-      .from("sales")
-      .select(
-        `
+        .from("sales")
+        .select(
+          `
         id,
         store_id,
         customer_name,
@@ -81,22 +53,18 @@ export async function GET() {
           )
         )
       `
-      )
-      .eq("store_id", profile.store_id)
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, to)
+        )
+        .eq("store_id", profile.store_id)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to)
     );
 
     if (error) {
       console.error("Error obteniendo ventas:", error);
 
       return NextResponse.json(
-        {
-          error:
-            error.message ||
-            "No se pudieron obtener las ventas.",
-        },
+        { error: "No se pudieron obtener las ventas." },
         { status: 400 }
       );
     }
@@ -123,54 +91,20 @@ export async function POST(request: NextRequest) {
     // ==========================================================
     //
     // IMPORTANTE:
-    // No usamos SUPABASE_SECRET_KEY para ejecutar el RPC.
+    // No usamos la llave secreta para ejecutar el RPC.
     //
     // register_sale() utiliza auth.uid(), por lo que necesitamos
     // conservar la sesión del usuario.
     //
     // ==========================================================
 
-    const supabase = await createClient();
+    const auth = await requireRole(SALES_ROLES);
 
-    // ==========================================================
-    // USUARIO AUTENTICADO
-    // ==========================================================
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    // ==========================================================
-    // OBTENER TIENDA DEL USUARIO
-    // ==========================================================
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .single();
-
-    if (profileError || !profile?.store_id) {
-      console.error(
-        "Error obteniendo tienda del usuario:",
-        profileError
-      );
-
-      return NextResponse.json(
-        {
-          error: "No se encontró la tienda del usuario",
-        },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const storeId = profile.store_id;
 
@@ -191,11 +125,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const {
-      items,
-      payment_method,
-      customer_name,
-    } = body;
+    const { items, payment_method, customer_name } = body;
 
     // ==========================================================
     // VALIDAR ITEMS
@@ -284,7 +214,8 @@ export async function POST(request: NextRequest) {
     //
     // auth.uid()
     //
-    // y validar que p_store_id pertenece realmente al usuario.
+    // y validar que p_store_id pertenece realmente al usuario
+    // y que el rol está autorizado (assert_store_role).
     //
     // ==========================================================
 
@@ -309,9 +240,10 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo registrar la venta.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar la venta."
+          ),
         },
         { status: 400 }
       );

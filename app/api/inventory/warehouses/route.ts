@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import {
+  CATALOG_WRITE_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
 
 type WarehousePayload = {
   name?: unknown;
@@ -44,79 +48,53 @@ function normalizeBranchId(value: unknown) {
   return trimmed || null;
 }
 
-async function getAuthenticatedContext() {
-  const supabase = await createClient();
+type WarehouseRow = {
+  id: string;
+  store_id: string;
+  branch_id: string | null;
+  name: string;
+  code: string;
+  description: string | null;
+  address: string | null;
+  capacity: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  branches:
+    | { id: string; name: string; code: string }
+    | { id: string; name: string; code: string }[]
+    | null;
+};
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-
-  if (authError || !user) {
-    return {
-      supabase,
-      user: null,
-      storeId: null,
-      role: null,
-    };
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("store_id, role")
-    .eq("id", user.id)
-    .single();
-
-  if (profileError || !profile?.store_id) {
-    return {
-      supabase,
-      user,
-      storeId: null,
-      role: profile?.role ?? null,
-    };
-  }
-
+function normalizeWarehouse(warehouse: WarehouseRow) {
   return {
-    supabase,
-    user,
-    storeId: profile.store_id as string,
-    role: profile.role as string | null,
-  };
-}
+    id: warehouse.id,
+    store_id: warehouse.store_id,
+    branch_id: warehouse.branch_id ?? null,
+    name: warehouse.name,
+    code: warehouse.code,
+    description: warehouse.description ?? null,
+    address: warehouse.address ?? null,
+    capacity: warehouse.capacity ?? null,
+    is_active: warehouse.is_active,
+    created_at: warehouse.created_at,
+    updated_at: warehouse.updated_at,
 
-function canManageWarehouses(role: string | null) {
-  return ["owner", "admin", "manager"].includes(role || "");
+    branch: Array.isArray(warehouse.branches)
+      ? warehouse.branches[0] ?? null
+      : warehouse.branches ?? null,
+  };
 }
 
 export async function GET() {
   try {
-    const {
-      supabase,
-      user,
-      storeId,
-    } = await getAuthenticatedContext();
+    const auth = await requireUser();
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        {
-          status: 401,
-        }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    if (!storeId) {
-      return NextResponse.json(
-        {
-          error: "No se encontró la tienda del usuario.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const { data: warehouses, error } = await supabase
       .from("warehouses")
@@ -140,49 +118,22 @@ export async function GET() {
           )
         `
       )
-      .eq("store_id", storeId)
-      .order("name", {
-        ascending: true,
-      });
+      .eq("store_id", profile.store_id)
+      .order("name", { ascending: true });
 
     if (error) {
-      console.error(
-        "ERROR OBTENIENDO ALMACENES:",
-        error
-      );
+      console.error("ERROR OBTENIENDO ALMACENES:", error);
 
       return NextResponse.json(
-        {
-          error: error.message,
-        },
-        {
-          status: 400,
-        }
+        { error: "No se pudieron obtener los almacenes." },
+        { status: 400 }
       );
     }
 
-    const normalizedWarehouses = (warehouses || []).map(
-      (warehouse: any) => ({
-        id: warehouse.id,
-        store_id: warehouse.store_id,
-        branch_id: warehouse.branch_id ?? null,
-        name: warehouse.name,
-        code: warehouse.code,
-        description: warehouse.description ?? null,
-        address: warehouse.address ?? null,
-        capacity: warehouse.capacity ?? null,
-        is_active: warehouse.is_active,
-        created_at: warehouse.created_at,
-        updated_at: warehouse.updated_at,
-
-        branch: Array.isArray(warehouse.branches)
-          ? warehouse.branches[0] ?? null
-          : warehouse.branches ?? null,
-      })
-    );
-
     return NextResponse.json({
-      warehouses: normalizedWarehouses,
+      warehouses: (warehouses || []).map((warehouse) =>
+        normalizeWarehouse(warehouse as WarehouseRow)
+      ),
     });
   } catch (error) {
     console.error(
@@ -191,61 +142,23 @@ export async function GET() {
     );
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
-      {
-        status: 500,
-      }
+      { error: "Error interno del servidor." },
+      { status: 500 }
     );
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const {
-      supabase,
-      user,
-      storeId,
-      role,
-    } = await getAuthenticatedContext();
+    const auth = await requireRole(CATALOG_WRITE_ROLES);
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        {
-          status: 401,
-        }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    if (!storeId) {
-      return NextResponse.json(
-        {
-          error: "No se encontró la tienda del usuario.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+    const { supabase, profile } = auth;
 
-    if (!canManageWarehouses(role)) {
-      return NextResponse.json(
-        {
-          error:
-            "No tienes permisos para gestionar almacenes.",
-        },
-        {
-          status: 403,
-        }
-      );
-    }
+    const storeId = profile.store_id;
 
     let body: WarehousePayload;
 
@@ -253,12 +166,8 @@ export async function POST(request: Request) {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        {
-          error: "El cuerpo de la solicitud no es válido.",
-        },
-        {
-          status: 400,
-        }
+        { error: "El cuerpo de la solicitud no es válido." },
+        { status: 400 }
       );
     }
 
@@ -271,34 +180,22 @@ export async function POST(request: Request) {
 
     if (!name) {
       return NextResponse.json(
-        {
-          error: "El nombre del almacén es obligatorio.",
-        },
-        {
-          status: 400,
-        }
+        { error: "El nombre del almacén es obligatorio." },
+        { status: 400 }
       );
     }
 
     if (!code) {
       return NextResponse.json(
-        {
-          error: "El código del almacén es obligatorio.",
-        },
-        {
-          status: 400,
-        }
+        { error: "El código del almacén es obligatorio." },
+        { status: 400 }
       );
     }
 
     if (capacity !== null && capacity < 0) {
       return NextResponse.json(
-        {
-          error: "La capacidad no puede ser negativa.",
-        },
-        {
-          status: 400,
-        }
+        { error: "La capacidad no puede ser negativa." },
+        { status: 400 }
       );
     }
 
@@ -310,15 +207,13 @@ export async function POST(request: Request) {
      * 3. Esté activa.
      */
     if (branchId) {
-      const {
-        data: branch,
-        error: branchError,
-      } = await supabase
-        .from("branches")
-        .select("id, store_id, name, code, is_active")
-        .eq("id", branchId)
-        .eq("store_id", storeId)
-        .maybeSingle();
+      const { data: branch, error: branchError } =
+        await supabase
+          .from("branches")
+          .select("id, store_id, name, code, is_active")
+          .eq("id", branchId)
+          .eq("store_id", storeId)
+          .maybeSingle();
 
       if (branchError) {
         console.error(
@@ -331,9 +226,7 @@ export async function POST(request: Request) {
             error:
               "No se pudo validar la sucursal seleccionada.",
           },
-          {
-            status: 400,
-          }
+          { status: 400 }
         );
       }
 
@@ -343,9 +236,7 @@ export async function POST(request: Request) {
             error:
               "La sucursal seleccionada no pertenece a tu tienda.",
           },
-          {
-            status: 400,
-          }
+          { status: 400 }
         );
       }
 
@@ -355,9 +246,7 @@ export async function POST(request: Request) {
             error:
               "No puedes asignar un almacén a una sucursal inactiva.",
           },
-          {
-            status: 400,
-          }
+          { status: 400 }
         );
       }
     }
@@ -365,15 +254,13 @@ export async function POST(request: Request) {
     /*
      * El código siempre debe ser único dentro de la tienda.
      */
-    const {
-      data: existingCode,
-      error: codeError,
-    } = await supabase
-      .from("warehouses")
-      .select("id")
-      .eq("store_id", storeId)
-      .eq("code", code)
-      .maybeSingle();
+    const { data: existingCode, error: codeError } =
+      await supabase
+        .from("warehouses")
+        .select("id")
+        .eq("store_id", storeId)
+        .eq("code", code)
+        .maybeSingle();
 
     if (codeError) {
       console.error(
@@ -382,12 +269,8 @@ export async function POST(request: Request) {
       );
 
       return NextResponse.json(
-        {
-          error: codeError.message,
-        },
-        {
-          status: 400,
-        }
+        { error: "No se pudo validar el código del almacén." },
+        { status: 400 }
       );
     }
 
@@ -397,9 +280,7 @@ export async function POST(request: Request) {
           error:
             "Ya existe un almacén con ese código en tu tienda.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
@@ -416,22 +297,12 @@ export async function POST(request: Request) {
       .eq("store_id", storeId)
       .ilike("name", name);
 
-    if (branchId) {
-      duplicateNameQuery = duplicateNameQuery.eq(
-        "branch_id",
-        branchId
-      );
-    } else {
-      duplicateNameQuery = duplicateNameQuery.is(
-        "branch_id",
-        null
-      );
-    }
+    duplicateNameQuery = branchId
+      ? duplicateNameQuery.eq("branch_id", branchId)
+      : duplicateNameQuery.is("branch_id", null);
 
-    const {
-      data: existingName,
-      error: nameError,
-    } = await duplicateNameQuery.maybeSingle();
+    const { data: existingName, error: nameError } =
+      await duplicateNameQuery.maybeSingle();
 
     if (nameError) {
       console.error(
@@ -440,12 +311,8 @@ export async function POST(request: Request) {
       );
 
       return NextResponse.json(
-        {
-          error: nameError.message,
-        },
-        {
-          status: 400,
-        }
+        { error: "No se pudo validar el nombre del almacén." },
+        { status: 400 }
       );
     }
 
@@ -456,29 +323,25 @@ export async function POST(request: Request) {
             ? "Ya existe un almacén con ese nombre en la sucursal seleccionada."
             : "Ya existe un almacén con ese nombre sin sucursal.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
-    const {
-      data: warehouse,
-      error: insertError,
-    } = await supabase
-      .from("warehouses")
-      .insert({
-        store_id: storeId,
-        branch_id: branchId,
-        name,
-        code,
-        description,
-        address,
-        capacity,
-        is_active: true,
-      })
-      .select(
-        `
+    const { data: warehouse, error: insertError } =
+      await supabase
+        .from("warehouses")
+        .insert({
+          store_id: storeId,
+          branch_id: branchId,
+          name,
+          code,
+          description,
+          address,
+          capacity,
+          is_active: true,
+        })
+        .select(
+          `
           id,
           store_id,
           branch_id,
@@ -496,14 +359,11 @@ export async function POST(request: Request) {
             code
           )
         `
-      )
-      .single();
+        )
+        .single();
 
     if (insertError) {
-      console.error(
-        "ERROR CREANDO ALMACÉN:",
-        insertError
-      );
+      console.error("ERROR CREANDO ALMACÉN:", insertError);
 
       if (insertError.code === "23505") {
         return NextResponse.json(
@@ -511,49 +371,25 @@ export async function POST(request: Request) {
             error:
               "Ya existe un almacén con ese código o nombre.",
           },
-          {
-            status: 409,
-          }
+          { status: 409 }
         );
       }
 
       return NextResponse.json(
-        {
-          error: insertError.message,
-        },
-        {
-          status: 400,
-        }
+        { error: "No se pudo crear el almacén." },
+        { status: 400 }
       );
     }
-
-    const normalizedWarehouse = {
-      id: warehouse.id,
-      store_id: warehouse.store_id,
-      branch_id: warehouse.branch_id ?? null,
-      name: warehouse.name,
-      code: warehouse.code,
-      description: warehouse.description ?? null,
-      address: warehouse.address ?? null,
-      capacity: warehouse.capacity ?? null,
-      is_active: warehouse.is_active,
-      created_at: warehouse.created_at,
-      updated_at: warehouse.updated_at,
-
-      branch: Array.isArray((warehouse as any).branches)
-        ? (warehouse as any).branches[0] ?? null
-        : (warehouse as any).branches ?? null,
-    };
 
     return NextResponse.json(
       {
         ok: true,
         message: "Almacén creado correctamente.",
-        warehouse: normalizedWarehouse,
+        warehouse: normalizeWarehouse(
+          warehouse as WarehouseRow
+        ),
       },
-      {
-        status: 201,
-      }
+      { status: 201 }
     );
   } catch (error) {
     console.error(
@@ -562,15 +398,8 @@ export async function POST(request: Request) {
     );
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
-      {
-        status: 500,
-      }
+      { error: "Error interno del servidor." },
+      { status: 500 }
     );
   }
 }

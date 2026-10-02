@@ -6,6 +6,7 @@ import {
   detectCsvDelimiter,
   parseEsCoInteger,
 } from "@/lib/quantity";
+import { createClient } from "@/lib/supabase/client";
 
 type Product = {
   id: string;
@@ -60,6 +61,11 @@ type FileInventoryRow = {
 export default function InventarioPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
+
+  // "Compras" no es una acción de employee (matriz de roles):
+  // se oculta el enlace mientras no sepamos el rol, para no
+  // mostrarlo un instante y quitarlo enseguida.
+  const [canSeePurchases, setCanSeePurchases] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [loadingMovements, setLoadingMovements] = useState(true);
@@ -202,6 +208,27 @@ export default function InventarioPage() {
     }
   }
 
+  async function loadRole() {
+    try {
+      const supabase = createClient();
+
+      const { data: role } = await supabase.rpc(
+        "get_my_role"
+      );
+
+      setCanSeePurchases(
+        role === "owner" ||
+          role === "admin" ||
+          role === "manager"
+      );
+    } catch (error) {
+      console.error(
+        "Error obteniendo el rol del usuario:",
+        error
+      );
+    }
+  }
+
   /*
    * =====================================================
    * CARGA INICIAL
@@ -213,6 +240,7 @@ export default function InventarioPage() {
       await Promise.all([
         loadProducts(),
         loadMovements(),
+        loadRole(),
       ]);
     };
 
@@ -1057,12 +1085,14 @@ export default function InventarioPage() {
               🔄 Movimientos
             </Link>
 
-            <Link
-              href="/inventario/entradas/compras"
-              className="inline-flex items-center justify-center rounded-lg border border-green-300 bg-green-50 px-5 py-3 font-medium text-green-700 hover:bg-green-100"
-            >
-              🛒 Compras
-            </Link>
+            {canSeePurchases && (
+              <Link
+                href="/inventario/entradas/compras"
+                className="inline-flex items-center justify-center rounded-lg border border-green-300 bg-green-50 px-5 py-3 font-medium text-green-700 hover:bg-green-100"
+              >
+                🛒 Compras
+              </Link>
+            )}
 
             {/* ALMACENAMIENTO */}
 

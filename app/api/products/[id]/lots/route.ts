@@ -1,80 +1,9 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { createClient as createServerSupabase } from "@/lib/supabase/server";
-
-function getSupabaseAdmin() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
-
-  if (!supabaseUrl || !supabaseSecretKey) {
-    throw new Error("Faltan las variables de Supabase.");
-  }
-
-  return createClient(supabaseUrl, supabaseSecretKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
-}
-
-async function getAuthenticatedUser() {
-  const supabase = await createServerSupabase();
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    return null;
-  }
-
-  return user;
-}
-
-async function getUserStoreId(userId: string) {
-  const supabase = getSupabaseAdmin();
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("store_id")
-    .eq("id", userId)
-    .single();
-
-  if (error) {
-    throw new Error(
-      `No se pudo obtener el perfil: ${error.message}`
-    );
-  }
-
-  if (!data?.store_id) {
-    throw new Error(
-      "El usuario no tiene una tienda asignada."
-    );
-  }
-
-  return data.store_id;
-}
-
-async function getUserRole() {
-  const supabase = await createServerSupabase();
-
-  const { data, error } = await supabase.rpc("get_my_role");
-
-  if (error) {
-    throw new Error(
-      `No se pudo verificar el rol del usuario: ${error.message}`
-    );
-  }
-
-  return data as string | null;
-}
-
-function canManageLots(role: string | null) {
-  return ["owner", "admin", "manager"].includes(role || "");
-}
+import {
+  CATALOG_WRITE_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
 
 function normalizeText(value: unknown) {
   if (typeof value !== "string") {
@@ -100,10 +29,7 @@ function parseNonNegativeInteger(
 
   const number = Number(value);
 
-  if (
-    !Number.isInteger(number) ||
-    number < 0
-  ) {
+  if (!Number.isInteger(number) || number < 0) {
     return null;
   }
 
@@ -111,11 +37,7 @@ function parseNonNegativeInteger(
 }
 
 function isValidDate(value: unknown) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
+  if (value === null || value === undefined || value === "") {
     return true;
   }
 
@@ -136,49 +58,34 @@ function isValidDate(value: unknown) {
 
 export async function GET(
   request: Request,
-  context: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getAuthenticatedUser();
+    const auth = await requireUser();
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
+    const { supabase, profile } = auth;
+
     const { id } = await context.params;
-
-    const storeId = await getUserStoreId(user.id);
-
-    const supabase = getSupabaseAdmin();
 
     /*
      * Primero verificamos que el producto
      * pertenezca a la tienda.
      */
-    const {
-      data: product,
-      error: productError,
-    } = await supabase
-      .from("products")
-      .select("id, name, sku, stock")
-      .eq("id", id)
-      .eq("store_id", storeId)
-      .single();
+    const { data: product, error: productError } =
+      await supabase
+        .from("products")
+        .select("id, name, sku, stock")
+        .eq("id", id)
+        .eq("store_id", profile.store_id)
+        .single();
 
     if (productError || !product) {
       return NextResponse.json(
-        {
-          error: "Producto no encontrado.",
-        },
+        { error: "Producto no encontrado." },
         { status: 404 }
       );
     }
@@ -186,10 +93,7 @@ export async function GET(
     /*
      * Obtenemos los lotes.
      */
-    const {
-      data: lots,
-      error: lotsError,
-    } = await supabase
+    const { data: lots, error: lotsError } = await supabase
       .from("product_lots")
       .select(`
         id,
@@ -202,21 +106,19 @@ export async function GET(
         created_at,
         updated_at
       `)
-      .eq("store_id", storeId)
+      .eq("store_id", profile.store_id)
       .eq("product_id", id)
       .order("expiration_date", {
         ascending: true,
         nullsFirst: false,
       })
-      .order("lot_number", {
-        ascending: true,
-      });
+      .order("lot_number", { ascending: true });
 
     if (lotsError) {
+      console.error("ERROR OBTENIENDO LOTES:", lotsError);
+
       return NextResponse.json(
-        {
-          error: lotsError.message,
-        },
+        { error: "No se pudieron obtener los lotes." },
         { status: 400 }
       );
     }
@@ -226,18 +128,10 @@ export async function GET(
       lots: lots || [],
     });
   } catch (error) {
-    console.error(
-      "ERROR OBTENIENDO LOTES:",
-      error
-    );
+    console.error("ERROR OBTENIENDO LOTES:", error);
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }
@@ -251,62 +145,44 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  context: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getAuthenticatedUser();
+    const auth = await requireRole(CATALOG_WRITE_ROLES);
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const role = await getUserRole();
-
-    if (!canManageLots(role)) {
-      return NextResponse.json(
-        {
-          error:
-            "No tienes permisos para gestionar lotes.",
-        },
-        { status: 403 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const { id } = await context.params;
 
-    const body = await request.json();
+    let body: Record<string, unknown>;
 
-    const storeId = await getUserStoreId(user.id);
-
-    const supabase = getSupabaseAdmin();
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
+      );
+    }
 
     /*
      * Verificar producto.
      */
-    const {
-      data: product,
-      error: productError,
-    } = await supabase
-      .from("products")
-      .select("id, name, stock")
-      .eq("id", id)
-      .eq("store_id", storeId)
-      .single();
+    const { data: product, error: productError } =
+      await supabase
+        .from("products")
+        .select("id, name, stock")
+        .eq("id", id)
+        .eq("store_id", profile.store_id)
+        .single();
 
     if (productError || !product) {
       return NextResponse.json(
-        {
-          error: "Producto no encontrado.",
-        },
+        { error: "Producto no encontrado." },
         { status: 404 }
       );
     }
@@ -314,16 +190,11 @@ export async function POST(
     /*
      * Número de lote.
      */
-    const lotNumber = normalizeText(
-      body.lot_number
-    );
+    const lotNumber = normalizeText(body.lot_number);
 
     if (!lotNumber) {
       return NextResponse.json(
-        {
-          error:
-            "El número de lote es obligatorio.",
-        },
+        { error: "El número de lote es obligatorio." },
         { status: 400 }
       );
     }
@@ -341,10 +212,7 @@ export async function POST(
 
     if (quantity === null) {
       return NextResponse.json(
-        {
-          error:
-            "La cantidad del lote no es válida.",
-        },
+        { error: "La cantidad del lote no es válida." },
         { status: 400 }
       );
     }
@@ -352,36 +220,24 @@ export async function POST(
     /*
      * Fechas.
      */
-    const manufacturingDate =
-      normalizeText(
-        body.manufacturing_date
-      );
+    const manufacturingDate = normalizeText(
+      body.manufacturing_date
+    );
 
-    const expirationDate =
-      normalizeText(
-        body.expiration_date
-      );
+    const expirationDate = normalizeText(
+      body.expiration_date
+    );
 
-    if (
-      !isValidDate(manufacturingDate)
-    ) {
+    if (!isValidDate(manufacturingDate)) {
       return NextResponse.json(
-        {
-          error:
-            "La fecha de fabricación no es válida.",
-        },
+        { error: "La fecha de fabricación no es válida." },
         { status: 400 }
       );
     }
 
-    if (
-      !isValidDate(expirationDate)
-    ) {
+    if (!isValidDate(expirationDate)) {
       return NextResponse.json(
-        {
-          error:
-            "La fecha de vencimiento no es válida.",
-        },
+        { error: "La fecha de vencimiento no es válida." },
         { status: 400 }
       );
     }
@@ -390,23 +246,16 @@ export async function POST(
      * La fabricación no puede ser posterior
      * al vencimiento.
      */
-    if (
-      manufacturingDate &&
-      expirationDate
-    ) {
-      const manufacturing =
-        new Date(
-          `${manufacturingDate}T00:00:00`
-        );
+    if (manufacturingDate && expirationDate) {
+      const manufacturing = new Date(
+        `${manufacturingDate}T00:00:00`
+      );
 
-      const expiration =
-        new Date(
-          `${expirationDate}T00:00:00`
-        );
+      const expiration = new Date(
+        `${expirationDate}T00:00:00`
+      );
 
-      if (
-        manufacturing > expiration
-      ) {
+      if (manufacturing > expiration) {
         return NextResponse.json(
           {
             error:
@@ -420,23 +269,23 @@ export async function POST(
     /*
      * Verificar lote duplicado.
      */
-    const {
-      data: existingLot,
-      error: existingLotError,
-    } = await supabase
-      .from("product_lots")
-      .select("id")
-      .eq("store_id", storeId)
-      .eq("product_id", id)
-      .eq("lot_number", lotNumber)
-      .maybeSingle();
+    const { data: existingLot, error: existingLotError } =
+      await supabase
+        .from("product_lots")
+        .select("id")
+        .eq("store_id", profile.store_id)
+        .eq("product_id", id)
+        .eq("lot_number", lotNumber)
+        .maybeSingle();
 
     if (existingLotError) {
+      console.error(
+        "ERROR VALIDANDO LOTE DUPLICADO:",
+        existingLotError
+      );
+
       return NextResponse.json(
-        {
-          error:
-            existingLotError.message,
-        },
+        { error: "No se pudo validar el número de lote." },
         { status: 400 }
       );
     }
@@ -464,19 +313,14 @@ export async function POST(
      *
      * No actualizamos products.stock.
      */
-    const {
-      data: lot,
-      error: lotError,
-    } = await supabase
+    const { data: lot, error: lotError } = await supabase
       .from("product_lots")
       .insert({
-        store_id: storeId,
+        store_id: profile.store_id,
         product_id: id,
         lot_number: lotNumber,
-        manufacturing_date:
-          manufacturingDate,
-        expiration_date:
-          expirationDate,
+        manufacturing_date: manufacturingDate,
+        expiration_date: expirationDate,
         quantity,
         is_active: isActive,
       })
@@ -484,10 +328,7 @@ export async function POST(
       .single();
 
     if (lotError) {
-      console.error(
-        "ERROR CREANDO LOTE:",
-        lotError
-      );
+      console.error("ERROR CREANDO LOTE:", lotError);
 
       if (lotError.code === "23505") {
         return NextResponse.json(
@@ -500,12 +341,7 @@ export async function POST(
       }
 
       return NextResponse.json(
-        {
-          error: lotError.message,
-          details: lotError.details,
-          hint: lotError.hint,
-          code: lotError.code,
-        },
+        { error: "No se pudo crear el lote." },
         { status: 400 }
       );
     }
@@ -513,8 +349,7 @@ export async function POST(
     return NextResponse.json(
       {
         ok: true,
-        message:
-          "Lote creado correctamente.",
+        message: "Lote creado correctamente.",
         lot,
         stock_unchanged: true,
         product_stock: product.stock,
@@ -522,18 +357,10 @@ export async function POST(
       { status: 201 }
     );
   } catch (error) {
-    console.error(
-      "ERROR CREANDO LOTE:",
-      error
-    );
+    console.error("ERROR CREANDO LOTE:", error);
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }

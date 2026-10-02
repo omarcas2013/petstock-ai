@@ -28,12 +28,6 @@ export function parseQuantity(value: unknown): number | null {
   return null;
 }
 
-export const INVENTORY_MANAGER_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-];
-
 /**
  * Convierte una cantidad escrita en formato es-CO
  * (como la exporta Excel en español) a entero.

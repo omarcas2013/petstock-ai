@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 type Sale = {
@@ -127,7 +127,14 @@ export default function DevolucionesPage() {
     }
   }
 
+  // Guarda el id de la venta de la última petición disparada, para
+  // poder descartar una respuesta tardía si el usuario ya eligió otra
+  // venta antes de que esta llegara (p. ej. clic rápido entre ventas).
+  const latestSaleRequestRef = useRef<string | null>(null);
+
   async function loadSaleItems(saleId: string) {
+    latestSaleRequestRef.current = saleId;
+
     try {
       setLoadingItems(true);
       setError("");
@@ -138,6 +145,10 @@ export default function DevolucionesPage() {
 
       const data = await response.json();
 
+      if (latestSaleRequestRef.current !== saleId) {
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(
           data.error ||
@@ -145,8 +156,23 @@ export default function DevolucionesPage() {
         );
       }
 
-      setSaleItems(data.sale?.sale_items ?? []);
+      const items = data.sale?.sale_items ?? [];
+
+      setSaleItems(items);
+
+      // Si la venta tiene un solo producto, lo seleccionamos
+      // de una vez para no obligar un clic extra.
+      if (items.length === 1) {
+        setForm((current) => ({
+          ...current,
+          saleItemId: items[0].id,
+        }));
+      }
     } catch (err) {
+      if (latestSaleRequestRef.current !== saleId) {
+        return;
+      }
+
       console.error(err);
 
       setSaleItems([]);
@@ -157,7 +183,9 @@ export default function DevolucionesPage() {
           : "No se pudieron cargar los productos."
       );
     } finally {
-      setLoadingItems(false);
+      if (latestSaleRequestRef.current === saleId) {
+        setLoadingItems(false);
+      }
     }
   }
 
@@ -253,6 +281,9 @@ export default function DevolucionesPage() {
     if (saleId) {
       await loadSaleItems(saleId);
     } else {
+      // Sin venta seleccionada: ninguna petición en curso debe
+      // poder repoblar la lista después de esto.
+      latestSaleRequestRef.current = null;
       setSaleItems([]);
     }
   };

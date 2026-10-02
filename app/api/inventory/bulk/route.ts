@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { createClient as createServerSupabase } from "@/lib/supabase/server";
+import { parseQuantity } from "@/lib/quantity";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import {
   INVENTORY_MANAGER_ROLES,
-  parseQuantity,
-} from "@/lib/quantity";
-import { fetchAllRows } from "@/lib/supabase/fetch-all";
+  requireRole,
+} from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type BulkItem = {
   product_id?: string;
@@ -21,130 +21,27 @@ type BulkRequest = {
   reason?: string | null;
 };
 
-function getSupabaseAdmin() {
-  const supabaseUrl =
-    process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const supabaseSecretKey =
-    process.env.SUPABASE_SECRET_KEY;
-
-  if (!supabaseUrl || !supabaseSecretKey) {
-    throw new Error(
-      "Faltan las variables de Supabase."
-    );
-  }
-
-  return createClient(
-    supabaseUrl,
-    supabaseSecretKey,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    }
-  );
-}
-
-async function getAuthenticatedUser() {
-  const supabase =
-    await createServerSupabase();
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    return null;
-  }
-
-  return user;
-}
-
-async function getUserProfile(
-  userId: string
-) {
-  const supabase =
-    getSupabaseAdmin();
-
-  const { data, error } =
-    await supabase
-      .from("profiles")
-      .select("store_id, role")
-      .eq("id", userId)
-      .single();
-
-  if (error) {
-    throw new Error(
-      `No se pudo obtener el perfil: ${error.message}`
-    );
-  }
-
-  if (!data?.store_id) {
-    throw new Error(
-      "El usuario no tiene una tienda asignada."
-    );
-  }
-
-  return data as {
-    store_id: string;
-    role: string | null;
-  };
-}
-
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
   try {
     /*
      * ============================================================
-     * AUTENTICACIÓN
+     * AUTENTICACIÓN Y PERMISOS
      * ============================================================
+     *
+     * Usamos el cliente de sesión (no la llave secreta): así
+     * register_bulk_inventory puede ejecutar auth.uid() y
+     * assert_store_role() lo valida de nuevo del lado de la base.
      */
 
-    const user =
-      await getAuthenticatedUser();
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        {
-          status: 401,
-        }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    /*
-     * ============================================================
-     * OBTENER TIENDA
-     * ============================================================
-     */
-
-    const profile =
-      await getUserProfile(user.id);
+    const { supabase, profile } = auth;
 
     const storeId = profile.store_id;
-
-    if (
-      !profile.role ||
-      !INVENTORY_MANAGER_ROLES.includes(
-        profile.role
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No tienes permisos para realizar cargas masivas de inventario.",
-        },
-        {
-          status: 403,
-        }
-      );
-    }
 
     /*
      * ============================================================
@@ -155,46 +52,29 @@ export async function POST(
     let body: BulkRequest;
 
     try {
-      body =
-        (await request.json()) as BulkRequest;
+      body = (await request.json()) as BulkRequest;
     } catch {
       return NextResponse.json(
-        {
-          error:
-            "El cuerpo de la solicitud no es JSON válido.",
-        },
-        {
-          status: 400,
-        }
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
       );
     }
 
     if (!body || typeof body !== "object") {
       return NextResponse.json(
-        {
-          error:
-            "El cuerpo de la solicitud no es válido.",
-        },
-        {
-          status: 400,
-        }
+        { error: "El cuerpo de la solicitud no es válido." },
+        { status: 400 }
       );
     }
 
-    const items = Array.isArray(
-      body.items
-    )
-      ? body.items
-      : [];
+    const items = Array.isArray(body.items) ? body.items : [];
 
-    const movementType =
-      body.movement_type || "entrada";
+    const movementType = body.movement_type || "entrada";
 
     const globalReason =
       typeof body.reason === "string"
         ? body.reason.trim() || null
         : null;
-
 
     /*
      * ============================================================
@@ -204,13 +84,8 @@ export async function POST(
 
     if (items.length === 0) {
       return NextResponse.json(
-        {
-          error:
-            "No se recibieron productos para procesar.",
-        },
-        {
-          status: 400,
-        }
+        { error: "No se recibieron productos para procesar." },
+        { status: 400 }
       );
     }
 
@@ -219,13 +94,8 @@ export async function POST(
       movementType !== "ajuste"
     ) {
       return NextResponse.json(
-        {
-          error:
-            "El tipo de movimiento no es válido.",
-        },
-        {
-          status: 400,
-        }
+        { error: "El tipo de movimiento no es válido." },
+        { status: 400 }
       );
     }
 
@@ -242,12 +112,9 @@ export async function POST(
           error:
             "El archivo contiene demasiados registros. Máximo permitido: 5.000.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
 
     /*
      * ============================================================
@@ -255,43 +122,30 @@ export async function POST(
      * ============================================================
      */
 
-    const normalizedItems =
-      items.map((item, index) => {
-        const productId =
-          item.product_id
-            ?.toString()
-            .trim() || null;
+    const normalizedItems = items.map((item, index) => {
+      const productId =
+        item.product_id?.toString().trim() || null;
 
-        const sku =
-          item.sku
-            ?.toString()
-            .trim() || null;
+      const sku = item.sku?.toString().trim() || null;
 
-        const barcode =
-          item.barcode
-            ?.toString()
-            .trim() || null;
+      const barcode = item.barcode?.toString().trim() || null;
 
-        const quantity =
-          parseQuantity(item.quantity);
+      const quantity = parseQuantity(item.quantity);
 
-        const reason =
-          item.reason
-            ?.toString()
-            .trim() ||
-          globalReason ||
-          null;
+      const reason =
+        item.reason?.toString().trim() ||
+        globalReason ||
+        null;
 
-        return {
-          row: index + 1,
-          product_id: productId,
-          sku,
-          barcode,
-          quantity,
-          reason,
-        };
-      });
-
+      return {
+        row: index + 1,
+        product_id: productId,
+        sku,
+        barcode,
+        quantity,
+        reason,
+      };
+    });
 
     /*
      * ============================================================
@@ -299,15 +153,12 @@ export async function POST(
      * ============================================================
      */
 
-    const invalidQuantity =
-      normalizedItems.find(
-        (item) =>
-          item.quantity === null ||
-          !Number.isInteger(
-            item.quantity
-          ) ||
-          item.quantity < 0
-      );
+    const invalidQuantity = normalizedItems.find(
+      (item) =>
+        item.quantity === null ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity < 0
+    );
 
     if (invalidQuantity) {
       return NextResponse.json(
@@ -315,9 +166,7 @@ export async function POST(
           error: `Cantidad inválida en la fila ${invalidQuantity.row}.`,
           row: invalidQuantity.row,
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
@@ -326,11 +175,9 @@ export async function POST(
      */
 
     if (movementType === "entrada") {
-      const zeroQuantity =
-        normalizedItems.find(
-          (item) =>
-            item.quantity === 0
-        );
+      const zeroQuantity = normalizedItems.find(
+        (item) => item.quantity === 0
+      );
 
       if (zeroQuantity) {
         return NextResponse.json(
@@ -338,13 +185,10 @@ export async function POST(
             error: `La cantidad debe ser mayor que 0 en la fila ${zeroQuantity.row}.`,
             row: zeroQuantity.row,
           },
-          {
-            status: 400,
-          }
+          { status: 400 }
         );
       }
     }
-
 
     /*
      * ============================================================
@@ -352,13 +196,9 @@ export async function POST(
      * ============================================================
      */
 
-    const missingIdentifier =
-      normalizedItems.find(
-        (item) =>
-          !item.product_id &&
-          !item.sku &&
-          !item.barcode
-      );
+    const missingIdentifier = normalizedItems.find(
+      (item) => !item.product_id && !item.sku && !item.barcode
+    );
 
     if (missingIdentifier) {
       return NextResponse.json(
@@ -368,12 +208,9 @@ export async function POST(
             "no tiene product_id, SKU ni código de barras.",
           row: missingIdentifier.row,
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
 
     /*
      * ============================================================
@@ -381,15 +218,12 @@ export async function POST(
      * ============================================================
      */
 
-    const supabase =
-      getSupabaseAdmin();
-
-    const { data: products, error } =
-      await fetchAllRows((from, to) =>
+    const { data: products, error } = await fetchAllRows(
+      (from, to) =>
         supabase
-        .from("products")
-        .select(
-          `
+          .from("products")
+          .select(
+            `
             id,
             name,
             sku,
@@ -397,30 +231,20 @@ export async function POST(
             stock,
             store_id
           `
-        )
-        .eq("store_id", storeId)
-        .order("id")
-        .range(from, to)
-      );
+          )
+          .eq("store_id", storeId)
+          .order("id")
+          .range(from, to)
+    );
 
     if (error) {
-      console.error(
-        "Error consultando productos:",
-        error
-      );
+      console.error("Error consultando productos:", error);
 
       return NextResponse.json(
-        {
-          error:
-            "No se pudieron consultar los productos.",
-          details: error.message,
-        },
-        {
-          status: 500,
-        }
+        { error: "No se pudieron consultar los productos." },
+        { status: 500 }
       );
     }
-
 
     /*
      * ============================================================
@@ -428,35 +252,27 @@ export async function POST(
      * ============================================================
      */
 
-    const productsById =
-      new Map<
-        string,
-        NonNullable<typeof products>[number]
-      >();
+    const productsById = new Map<
+      string,
+      NonNullable<typeof products>[number]
+    >();
 
-    const productsBySku =
-      new Map<
-        string,
-        NonNullable<typeof products>[number]
-      >();
+    const productsBySku = new Map<
+      string,
+      NonNullable<typeof products>[number]
+    >();
 
-    const productsByBarcode =
-      new Map<
-        string,
-        NonNullable<typeof products>[number]
-      >();
+    const productsByBarcode = new Map<
+      string,
+      NonNullable<typeof products>[number]
+    >();
 
     for (const product of products || []) {
-      productsById.set(
-        product.id,
-        product
-      );
+      productsById.set(product.id, product);
 
       if (product.sku) {
         productsBySku.set(
-          product.sku
-            .trim()
-            .toLowerCase(),
+          product.sku.trim().toLowerCase(),
           product
         );
       }
@@ -468,7 +284,6 @@ export async function POST(
         );
       }
     }
-
 
     /*
      * ============================================================
@@ -492,9 +307,7 @@ export async function POST(
       error: string;
     }> = [];
 
-    for (
-      const item of normalizedItems
-    ) {
+    for (const item of normalizedItems) {
       let product:
         | NonNullable<typeof products>[number]
         | undefined;
@@ -508,24 +321,15 @@ export async function POST(
        */
 
       if (item.product_id) {
-        product =
-          productsById.get(
-            item.product_id
-          );
+        product = productsById.get(item.product_id);
       }
 
       if (!product && item.barcode) {
-        product =
-          productsByBarcode.get(
-            item.barcode
-          );
+        product = productsByBarcode.get(item.barcode);
       }
 
       if (!product && item.sku) {
-        product =
-          productsBySku.get(
-            item.sku.toLowerCase()
-          );
+        product = productsBySku.get(item.sku.toLowerCase());
       }
 
       if (!product) {
@@ -543,15 +347,12 @@ export async function POST(
         product_id: product.id,
         quantity: item.quantity as number,
         reason: item.reason,
-        product_name:
-          product.name,
+        product_name: product.name,
         sku: product.sku,
         barcode: product.barcode,
-        stock_before:
-          product.stock ?? 0,
+        stock_before: product.stock ?? 0,
       });
     }
-
 
     /*
      * ============================================================
@@ -570,16 +371,10 @@ export async function POST(
      * operación terminó aplicándose.
      */
 
-    const seenProducts =
-      new Map<string, number>();
+    const seenProducts = new Map<string, number>();
 
-    for (
-      const item of resolvedItems
-    ) {
-      const previousRow =
-        seenProducts.get(
-          item.product_id
-        );
+    for (const item of resolvedItems) {
+      const previousRow = seenProducts.get(item.product_id);
 
       if (previousRow) {
         validationErrors.push({
@@ -589,13 +384,9 @@ export async function POST(
             `está repetido. Ya aparece en la fila ${previousRow}.`,
         });
       } else {
-        seenProducts.set(
-          item.product_id,
-          item.row
-        );
+        seenProducts.set(item.product_id, item.row);
       }
     }
-
 
     /*
      * ============================================================
@@ -603,23 +394,17 @@ export async function POST(
      * ============================================================
      */
 
-    if (
-      validationErrors.length > 0
-    ) {
+    if (validationErrors.length > 0) {
       return NextResponse.json(
         {
           ok: false,
           error:
             "El archivo contiene errores y no se realizó ningún cambio.",
-          validation_errors:
-            validationErrors,
+          validation_errors: validationErrors,
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
 
     /*
      * ============================================================
@@ -627,16 +412,11 @@ export async function POST(
      * ============================================================
      */
 
-    const rpcItems =
-      resolvedItems.map((item) => ({
-        product_id:
-          item.product_id,
-        quantity:
-          item.quantity,
-        reason:
-          item.reason,
-      }));
-
+    const rpcItems = resolvedItems.map((item) => ({
+      product_id: item.product_id,
+      quantity: item.quantity,
+      reason: item.reason,
+    }));
 
     /*
      * ============================================================
@@ -644,20 +424,13 @@ export async function POST(
      * ============================================================
      */
 
-    const {
-      data: result,
-      error: rpcError,
-    } = await supabase.rpc(
-      "register_bulk_inventory",
-      {
+    const { data: result, error: rpcError } =
+      await supabase.rpc("register_bulk_inventory", {
         p_store_id: storeId,
         p_items: rpcItems,
-        p_movement_type:
-          movementType,
-        p_reason:
-          globalReason,
-      }
-    );
+        p_movement_type: movementType,
+        p_reason: globalReason,
+      });
 
     if (rpcError) {
       console.error(
@@ -668,22 +441,14 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
-          error:
-            rpcError.message ||
-            "No se pudo procesar la carga masiva.",
-          details:
-            rpcError.details,
-          hint:
-            rpcError.hint,
-          code:
-            rpcError.code,
+          error: rpcErrorMessage(
+            rpcError,
+            "No se pudo procesar la carga masiva."
+          ),
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
 
     /*
      * ============================================================
@@ -708,16 +473,8 @@ export async function POST(
     );
 
     return NextResponse.json(
-      {
-        ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
-      {
-        status: 500,
-      }
+      { ok: false, error: "Error interno del servidor." },
+      { status: 500 }
     );
   }
 }

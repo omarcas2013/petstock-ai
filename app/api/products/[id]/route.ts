@@ -1,120 +1,17 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { createClient as createServerSupabase } from "@/lib/supabase/server";
+import {
+  CATALOG_WRITE_ROLES,
+  hideCostFields,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
 
-function getSupabaseAdmin() {
-  const supabaseUrl =
-    process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const supabaseSecretKey =
-    process.env.SUPABASE_SECRET_KEY;
-
-  if (!supabaseUrl || !supabaseSecretKey) {
-    throw new Error(
-      "Faltan las variables de Supabase."
-    );
-  }
-
-  return createClient(
-    supabaseUrl,
-    supabaseSecretKey,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    }
-  );
-}
-
-async function getAuthenticatedUser() {
-  const supabase =
-    await createServerSupabase();
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
+function normalizeText(value: unknown) {
+  if (typeof value !== "string") {
     return null;
   }
 
-  return user;
-}
-
-async function getUserStoreId(
-  userId: string
-) {
-  const supabase =
-    getSupabaseAdmin();
-
-  const {
-    data,
-    error,
-  } = await supabase
-    .from("profiles")
-    .select("store_id")
-    .eq("id", userId)
-    .single();
-
-  if (error) {
-    throw new Error(
-      `No se pudo obtener el perfil: ${error.message}`
-    );
-  }
-
-  if (!data?.store_id) {
-    throw new Error(
-      "El usuario no tiene una tienda asignada."
-    );
-  }
-
-  return data.store_id;
-}
-
-async function getUserRole() {
-  const supabase =
-    await createServerSupabase();
-
-  const {
-    data,
-    error,
-  } = await supabase.rpc(
-    "get_my_role"
-  );
-
-  if (error) {
-    throw new Error(
-      `No se pudo verificar el rol del usuario: ${error.message}`
-    );
-  }
-
-  return data as string | null;
-}
-
-function isProductManagerRole(
-  role: string | null
-) {
-  return [
-    "owner",
-    "admin",
-    "manager",
-  ].includes(role || "");
-}
-
-function normalizeText(
-  value: unknown
-) {
-  if (
-    typeof value !== "string"
-  ) {
-    return null;
-  }
-
-  const trimmed =
-    value.trim();
+  const trimmed = value.trim();
 
   return trimmed || null;
 }
@@ -131,13 +28,9 @@ function parseNonNegativeNumber(
     return fallback;
   }
 
-  const number =
-    Number(value);
+  const number = Number(value);
 
-  if (
-    !Number.isFinite(number) ||
-    number < 0
-  ) {
+  if (!Number.isFinite(number) || number < 0) {
     return null;
   }
 
@@ -156,13 +49,9 @@ function parseNonNegativeInteger(
     return fallback;
   }
 
-  const number =
-    Number(value);
+  const number = Number(value);
 
-  if (
-    !Number.isInteger(number) ||
-    number < 0
-  ) {
+  if (!Number.isInteger(number) || number < 0) {
     return null;
   }
 
@@ -177,41 +66,20 @@ function parseNonNegativeInteger(
 
 export async function GET(
   request: Request,
-  context: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user =
-      await getAuthenticatedUser();
+    const auth = await requireUser();
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error:
-            "No autenticado.",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { id } =
-      await context.params;
+    const { supabase, profile } = auth;
 
-    const storeId =
-      await getUserStoreId(
-        user.id
-      );
+    const { id } = await context.params;
 
-    const supabase =
-      getSupabaseAdmin();
-
-    const {
-      data,
-      error,
-    } = await supabase
+    const { data, error } = await supabase
       .from("products")
       .select(`
         *,
@@ -221,38 +89,24 @@ export async function GET(
         )
       `)
       .eq("id", id)
-      .eq("store_id", storeId)
+      .eq("store_id", profile.store_id)
       .single();
 
-    if (
-      error ||
-      !data
-    ) {
+    if (error || !data) {
       return NextResponse.json(
-        {
-          error:
-            "Producto no encontrado.",
-        },
+        { error: "Producto no encontrado." },
         { status: 404 }
       );
     }
 
     return NextResponse.json({
-      product: data,
+      product: hideCostFields(data, profile.role, ["purchase_price"]),
     });
   } catch (error) {
-    console.error(
-      "ERROR OBTENIENDO PRODUCTO:",
-      error
-    );
+    console.error("ERROR OBTENIENDO PRODUCTO:", error);
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }
@@ -266,57 +120,29 @@ export async function GET(
 
 export async function PUT(
   request: Request,
-  context: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user =
-      await getAuthenticatedUser();
+    const auth = await requireRole(CATALOG_WRITE_ROLES);
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error:
-            "No autenticado.",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    /*
-     * Validamos permisos.
-     */
-    const role =
-      await getUserRole();
+    const { supabase, profile } = auth;
 
-    if (
-      !isProductManagerRole(role)
-    ) {
+    const { id } = await context.params;
+
+    let body: Record<string, unknown>;
+
+    try {
+      body = await request.json();
+    } catch {
       return NextResponse.json(
-        {
-          error:
-            "No tienes permisos para editar productos.",
-        },
-        { status: 403 }
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
       );
     }
-
-    const { id } =
-      await context.params;
-
-    const body =
-      await request.json();
-
-    const storeId =
-      await getUserStoreId(
-        user.id
-      );
-
-    const supabase =
-      getSupabaseAdmin();
 
     /*
     |--------------------------------------------------------------------------
@@ -346,25 +172,17 @@ export async function PUT(
     |--------------------------------------------------------------------------
     */
 
-    const {
-      data: currentProduct,
-      error: currentError,
-    } = await supabase
-      .from("products")
-      .select("*")
-      .eq("id", id)
-      .eq("store_id", storeId)
-      .single();
+    const { data: currentProduct, error: currentError } =
+      await supabase
+        .from("products")
+        .select("*")
+        .eq("id", id)
+        .eq("store_id", profile.store_id)
+        .single();
 
-    if (
-      currentError ||
-      !currentProduct
-    ) {
+    if (currentError || !currentProduct) {
       return NextResponse.json(
-        {
-          error:
-            "Producto no encontrado.",
-        },
+        { error: "Producto no encontrado." },
         { status: 404 }
       );
     }
@@ -375,75 +193,29 @@ export async function PUT(
     |--------------------------------------------------------------------------
     */
 
-    const name =
-      normalizeText(
-        body.name
-      );
+    const name = normalizeText(body.name);
 
     if (!name) {
       return NextResponse.json(
-        {
-          error:
-            "El nombre del producto es obligatorio.",
-        },
+        { error: "El nombre del producto es obligatorio." },
         { status: 400 }
       );
     }
 
-    const description =
-      normalizeText(
-        body.description
-      );
-
-    const brand =
-      normalizeText(
-        body.brand
-      );
-
-    const category =
-      normalizeText(
-        body.category
-      );
-
-    const subcategory =
-      normalizeText(
-        body.subcategory
-      );
-
-    const supplierId =
-      normalizeText(
-        body.supplier_id
-      );
-
-    const petType =
-      normalizeText(
-        body.pet_type
-      );
-
-    const presentation =
-      normalizeText(
-        body.presentation
-      );
+    const description = normalizeText(body.description);
+    const brand = normalizeText(body.brand);
+    const category = normalizeText(body.category);
+    const subcategory = normalizeText(body.subcategory);
+    const supplierId = normalizeText(body.supplier_id);
+    const petType = normalizeText(body.pet_type);
+    const presentation = normalizeText(body.presentation);
 
     const unitOfMeasure =
-      normalizeText(
-        body.unit_of_measure
-      ) || "unidad";
+      normalizeText(body.unit_of_measure) || "unidad";
 
-    const sku =
-      normalizeText(
-        body.sku
-      );
-
-    const barcode =
-      normalizeText(
-        body.barcode
-      );
-
-    const imageUrl =
-      normalizeText(
-        body.image_url
-      );
+    const sku = normalizeText(body.sku);
+    const barcode = normalizeText(body.barcode);
+    const imageUrl = normalizeText(body.image_url);
 
     /*
     |--------------------------------------------------------------------------
@@ -451,38 +223,23 @@ export async function PUT(
     |--------------------------------------------------------------------------
     */
 
-    const purchasePrice =
-      parseNonNegativeNumber(
-        body.purchase_price,
-        0
-      );
+    const purchasePrice = parseNonNegativeNumber(
+      body.purchase_price,
+      0
+    );
 
-    const salePrice =
-      parseNonNegativeNumber(
-        body.sale_price,
-        0
-      );
+    const salePrice = parseNonNegativeNumber(body.sale_price, 0);
 
-    if (
-      purchasePrice === null
-    ) {
+    if (purchasePrice === null) {
       return NextResponse.json(
-        {
-          error:
-            "El precio de compra no es válido.",
-        },
+        { error: "El precio de compra no es válido." },
         { status: 400 }
       );
     }
 
-    if (
-      salePrice === null
-    ) {
+    if (salePrice === null) {
       return NextResponse.json(
-        {
-          error:
-            "El precio de venta no es válido.",
-        },
+        { error: "El precio de venta no es válido." },
         { status: 400 }
       );
     }
@@ -494,38 +251,22 @@ export async function PUT(
     */
 
     const taxType =
-      body.tax_type === "exento"
-        ? "exento"
-        : "porcentaje";
+      body.tax_type === "exento" ? "exento" : "porcentaje";
 
-    let taxRate =
-      parseNonNegativeNumber(
-        body.tax_rate,
-        0
-      );
+    let taxRate = parseNonNegativeNumber(body.tax_rate, 0);
 
-    if (
-      taxRate === null
-    ) {
+    if (taxRate === null) {
       return NextResponse.json(
-        {
-          error:
-            "La tasa de impuesto no es válida.",
-        },
+        { error: "La tasa de impuesto no es válida." },
         { status: 400 }
       );
     }
 
-    if (
-      taxType === "exento"
-    ) {
+    if (taxType === "exento") {
       taxRate = 0;
     }
 
-    if (
-      taxRate < 0 ||
-      taxRate > 100
-    ) {
+    if (taxRate < 0 || taxRate > 100) {
       return NextResponse.json(
         {
           error:
@@ -541,70 +282,49 @@ export async function PUT(
     |--------------------------------------------------------------------------
     */
 
-    const minimumStock =
-      parseNonNegativeInteger(
-        body.minimum_stock,
-        0
-      );
+    const minimumStock = parseNonNegativeInteger(
+      body.minimum_stock,
+      0
+    );
 
-    const reorderPoint =
-      parseNonNegativeInteger(
-        body.reorder_point,
-        0
-      );
+    const reorderPoint = parseNonNegativeInteger(
+      body.reorder_point,
+      0
+    );
 
-    if (
-      minimumStock === null
-    ) {
+    if (minimumStock === null) {
       return NextResponse.json(
-        {
-          error:
-            "El stock mínimo no es válido.",
-        },
+        { error: "El stock mínimo no es válido." },
         { status: 400 }
       );
     }
 
-    if (
-      reorderPoint === null
-    ) {
+    if (reorderPoint === null) {
       return NextResponse.json(
-        {
-          error:
-            "El punto de reposición no es válido.",
-        },
+        { error: "El punto de reposición no es válido." },
         { status: 400 }
       );
     }
 
-    let maximumStock:
-      number | null = null;
+    let maximumStock: number | null = null;
 
     if (
       body.maximum_stock !== "" &&
       body.maximum_stock !== null &&
       body.maximum_stock !== undefined
     ) {
-      maximumStock =
-        parseNonNegativeInteger(
-          body.maximum_stock
-        );
+      maximumStock = parseNonNegativeInteger(
+        body.maximum_stock
+      );
 
-      if (
-        maximumStock === null
-      ) {
+      if (maximumStock === null) {
         return NextResponse.json(
-          {
-            error:
-              "El stock máximo no es válido.",
-          },
+          { error: "El stock máximo no es válido." },
           { status: 400 }
         );
       }
 
-      if (
-        maximumStock < minimumStock
-      ) {
+      if (maximumStock < minimumStock) {
         return NextResponse.json(
           {
             error:
@@ -622,32 +342,29 @@ export async function PUT(
     */
 
     if (supplierId) {
-      const {
-        data: supplier,
-        error: supplierError,
-      } = await supabase
-        .from("suppliers")
-        .select("id")
-        .eq("id", supplierId)
-        .eq("store_id", storeId)
-        .maybeSingle();
+      const { data: supplier, error: supplierError } =
+        await supabase
+          .from("suppliers")
+          .select("id")
+          .eq("id", supplierId)
+          .eq("store_id", profile.store_id)
+          .maybeSingle();
 
       if (supplierError) {
+        console.error(
+          "ERROR VALIDANDO PROVEEDOR:",
+          supplierError
+        );
+
         return NextResponse.json(
-          {
-            error:
-              supplierError.message,
-          },
+          { error: "No se pudo validar el proveedor." },
           { status: 400 }
         );
       }
 
       if (!supplier) {
         return NextResponse.json(
-          {
-            error:
-              "El proveedor no pertenece a tu tienda.",
-          },
+          { error: "El proveedor no pertenece a tu tienda." },
           { status: 403 }
         );
       }
@@ -660,23 +377,20 @@ export async function PUT(
     */
 
     if (sku) {
-      const {
-        data: existingSku,
-        error: skuError,
-      } = await supabase
-        .from("products")
-        .select("id, name")
-        .eq("store_id", storeId)
-        .eq("sku", sku)
-        .neq("id", id)
-        .maybeSingle();
+      const { data: existingSku, error: skuError } =
+        await supabase
+          .from("products")
+          .select("id, name")
+          .eq("store_id", profile.store_id)
+          .eq("sku", sku)
+          .neq("id", id)
+          .maybeSingle();
 
       if (skuError) {
+        console.error("ERROR VALIDANDO SKU:", skuError);
+
         return NextResponse.json(
-          {
-            error:
-              skuError.message,
-          },
+          { error: "No se pudo validar el SKU." },
           { status: 400 }
         );
       }
@@ -686,8 +400,7 @@ export async function PUT(
           {
             error:
               "Este SKU ya está asignado a otro producto.",
-            product:
-              existingSku,
+            product: existingSku,
           },
           { status: 409 }
         );
@@ -701,23 +414,23 @@ export async function PUT(
     */
 
     if (barcode) {
-      const {
-        data: existingBarcode,
-        error: barcodeError,
-      } = await supabase
-        .from("products")
-        .select("id, name")
-        .eq("store_id", storeId)
-        .eq("barcode", barcode)
-        .neq("id", id)
-        .maybeSingle();
+      const { data: existingBarcode, error: barcodeError } =
+        await supabase
+          .from("products")
+          .select("id, name")
+          .eq("store_id", profile.store_id)
+          .eq("barcode", barcode)
+          .neq("id", id)
+          .maybeSingle();
 
       if (barcodeError) {
+        console.error(
+          "ERROR VALIDANDO CÓDIGO DE BARRAS:",
+          barcodeError
+        );
+
         return NextResponse.json(
-          {
-            error:
-              barcodeError.message,
-          },
+          { error: "No se pudo validar el código de barras." },
           { status: 400 }
         );
       }
@@ -727,8 +440,7 @@ export async function PUT(
           {
             error:
               "Este código de barras ya está asignado a otro producto.",
-            product:
-              existingBarcode,
+            product: existingBarcode,
           },
           { status: 409 }
         );
@@ -742,14 +454,12 @@ export async function PUT(
     */
 
     const isActive =
-      typeof body.is_active ===
-      "boolean"
+      typeof body.is_active === "boolean"
         ? body.is_active
         : currentProduct.is_active;
 
     const managesLots =
-      typeof body.manages_lots ===
-      "boolean"
+      typeof body.manages_lots === "boolean"
         ? body.manages_lots
         : currentProduct.manages_lots;
 
@@ -763,84 +473,41 @@ export async function PUT(
     |
     */
 
-    const {
-      data,
-      error,
-    } = await supabase
+    const { data, error } = await supabase
       .from("products")
       .update({
         name,
-
         description,
-
         brand,
-
         category,
-
         subcategory,
-
-        supplier_id:
-          supplierId,
-
-        pet_type:
-          petType,
-
+        supplier_id: supplierId,
+        pet_type: petType,
         presentation,
-
-        unit_of_measure:
-          unitOfMeasure,
-
+        unit_of_measure: unitOfMeasure,
         sku,
-
         barcode,
-
-        purchase_price:
-          purchasePrice,
-
-        sale_price:
-          salePrice,
-
-        tax_rate:
-          taxRate,
-
-        tax_type:
-          taxType,
-
-        minimum_stock:
-          minimumStock,
-
-        maximum_stock:
-          maximumStock,
-
-        reorder_point:
-          reorderPoint,
-
-        is_active:
-          isActive,
-
-        manages_lots:
-          managesLots,
-
-        image_url:
-          imageUrl,
-
-        updated_at:
-          new Date().toISOString(),
+        purchase_price: purchasePrice,
+        sale_price: salePrice,
+        tax_rate: taxRate,
+        tax_type: taxType,
+        minimum_stock: minimumStock,
+        maximum_stock: maximumStock,
+        reorder_point: reorderPoint,
+        is_active: isActive,
+        manages_lots: managesLots,
+        image_url: imageUrl,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", id)
-      .eq("store_id", storeId)
+      .eq("store_id", profile.store_id)
       .select()
       .single();
 
     if (error) {
-      console.error(
-        "ERROR ACTUALIZANDO PRODUCTO:",
-        error
-      );
+      console.error("ERROR ACTUALIZANDO PRODUCTO:", error);
 
-      if (
-        error.code === "23505"
-      ) {
+      if (error.code === "23505") {
         return NextResponse.json(
           {
             error:
@@ -851,39 +518,21 @@ export async function PUT(
       }
 
       return NextResponse.json(
-        {
-          error:
-            error.message,
-          details:
-            error.details,
-          hint:
-            error.hint,
-          code:
-            error.code,
-        },
+        { error: "No se pudo actualizar el producto." },
         { status: 400 }
       );
     }
 
     return NextResponse.json({
       ok: true,
-      message:
-        "Producto actualizado correctamente.",
+      message: "Producto actualizado correctamente.",
       product: data,
     });
   } catch (error) {
-    console.error(
-      "ERROR INTERNO:",
-      error
-    );
+    console.error("ERROR INTERNO:", error);
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }

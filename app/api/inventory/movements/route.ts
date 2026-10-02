@@ -1,41 +1,27 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetch-all";
+import {
+  INVENTORY_MANAGER_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 export async function GET() {
   try {
-    const supabase = await createClient();
+    const auth = await requireUser();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado." },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .single();
+    const { supabase, profile } = auth;
 
-    if (profileError || !profile?.store_id) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario." },
-        { status: 400 }
-      );
-    }
-
-    const { data: movements, error } = await fetchAllRows((from, to) =>
-      supabase
-      .from("inventory_movements")
-      .select(`
+    const { data: movements, error } = await fetchAllRows(
+      (from, to) =>
+        supabase
+          .from("inventory_movements")
+          .select(`
         id,
         product_id,
         movement_type,
@@ -50,19 +36,19 @@ export async function GET() {
           store_id
         )
       `)
-      // inventory_movements no tiene store_id:
-      // filtramos por la tienda del producto.
-      .eq("products.store_id", profile.store_id)
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, to)
+          // inventory_movements no tiene store_id:
+          // filtramos por la tienda del producto.
+          .eq("products.store_id", profile.store_id)
+          .order("created_at", { ascending: false })
+          .order("id")
+          .range(from, to)
     );
 
     if (error) {
       console.error("Error cargando movimientos:", error);
 
       return NextResponse.json(
-        { error: error.message },
+        { error: "No se pudieron cargar los movimientos." },
         { status: 500 }
       );
     }
@@ -82,35 +68,15 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado." },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .single();
+    const { supabase, profile } = auth;
 
-    if (profileError || !profile?.store_id) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario." },
-        { status: 400 }
-      );
-    }
-
-    let body;
+    let body: Record<string, unknown>;
 
     try {
       body = await request.json();
@@ -128,12 +94,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const {
-      product_id,
-      movement_type,
-      quantity,
-      reason,
-    } = body;
+    const { product_id, movement_type, quantity, reason } =
+      body;
 
     if (!product_id) {
       return NextResponse.json(
@@ -144,7 +106,7 @@ export async function POST(request: Request) {
 
     if (
       !["entrada", "salida", "ajuste"].includes(
-        movement_type
+        movement_type as string
       )
     ) {
       return NextResponse.json(
@@ -157,7 +119,7 @@ export async function POST(request: Request) {
     // en entradas y salidas debe ser mayor que 0.
     if (
       !Number.isInteger(quantity) ||
-      quantity < 0 ||
+      (quantity as number) < 0 ||
       (movement_type !== "ajuste" && quantity === 0)
     ) {
       return NextResponse.json(
@@ -186,32 +148,29 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Registrar movimiento mediante la función
-     * PostgreSQL.
+     * Registrar movimiento mediante la función PostgreSQL
+     * (también valida sesión, tienda y rol: assert_store_role).
      */
-    const { data: movement, error } =
-      await supabase.rpc(
-        "register_inventory_movement",
-        {
-          p_product_id: product_id,
-          p_movement_type: movement_type,
-          p_quantity: quantity,
-          p_reason: reason || null,
-          p_store_id: profile.store_id,
-        }
-      );
+    const { data: movement, error } = await supabase.rpc(
+      "register_inventory_movement",
+      {
+        p_product_id: product_id,
+        p_movement_type: movement_type,
+        p_quantity: quantity,
+        p_reason: typeof reason === "string" ? reason : null,
+        p_store_id: profile.store_id,
+      }
+    );
 
     if (error) {
-      console.error(
-        "Error registrando movimiento:",
-        error
-      );
+      console.error("Error registrando movimiento:", error);
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo registrar el movimiento.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar el movimiento."
+          ),
         },
         { status: 400 }
       );
