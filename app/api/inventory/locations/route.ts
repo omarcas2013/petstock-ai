@@ -1,75 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { createClient as createServerClient } from "@/lib/supabase/server";
-
-function getSupabaseAdmin() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
-
-  if (!supabaseUrl || !supabaseSecretKey) {
-    throw new Error(
-      "Faltan las variables de entorno de Supabase."
-    );
-  }
-
-  return createClient(
-    supabaseUrl,
-    supabaseSecretKey,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    }
-  );
-}
-
-async function getAuthenticatedUser() {
-  const supabase = await createServerClient();
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    return null;
-  }
-
-  return user;
-}
-
-async function getUserStoreId(userId: string) {
-  const supabaseAdmin = getSupabaseAdmin();
-
-  const { data, error } = await supabaseAdmin
-    .from("profiles")
-    .select("store_id")
-    .eq("id", userId)
-    .single();
-
-  if (error || !data?.store_id) {
-    return null;
-  }
-
-  return data.store_id as string;
-}
-
-async function getUserRole(userId: string) {
-  const supabaseAdmin = getSupabaseAdmin();
-
-  const { data, error } = await supabaseAdmin
-    .from("profiles")
-    .select("role")
-    .eq("id", userId)
-    .single();
-
-  if (error || !data?.role) {
-    return null;
-  }
-
-  return data.role as string;
-}
+import {
+  CATALOG_WRITE_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
 
 const VALID_LOCATION_TYPES = [
   "zona",
@@ -83,71 +17,46 @@ const VALID_LOCATION_TYPES = [
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser();
+    const auth = await requireUser();
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const storeId = await getUserStoreId(user.id);
+    const { supabase, profile } = auth;
 
-    if (!storeId) {
-      return NextResponse.json(
-        {
-          error:
-            "No se encontró la tienda del usuario.",
-        },
-        { status: 400 }
-      );
-    }
+    const { searchParams } = new URL(request.url);
 
-    const { searchParams } =
-      new URL(request.url);
-
-    const warehouseId =
-      searchParams.get("warehouse_id");
+    const warehouseId = searchParams.get("warehouse_id");
 
     if (!warehouseId) {
       return NextResponse.json(
-        {
-          error:
-            "El ID del almacén es obligatorio.",
-        },
+        { error: "El ID del almacén es obligatorio." },
         { status: 400 }
       );
     }
-
-    const supabaseAdmin = getSupabaseAdmin();
 
     // Verificamos que el almacén pertenezca
     // a la tienda del usuario.
     const { data: warehouse, error: warehouseError } =
-      await supabaseAdmin
+      await supabase
         .from("warehouses")
         .select("id")
         .eq("id", warehouseId)
-        .eq("store_id", storeId)
+        .eq("store_id", profile.store_id)
         .single();
 
     if (warehouseError || !warehouse) {
       return NextResponse.json(
-        {
-          error: "Almacén no encontrado.",
-        },
+        { error: "Almacén no encontrado." },
         { status: 404 }
       );
     }
 
-    const { data: locations, error } =
-      await supabaseAdmin
-        .from("locations")
-        .select(
-          `
+    const { data: locations, error } = await supabase
+      .from("locations")
+      .select(
+        `
             id,
             store_id,
             warehouse_id,
@@ -160,24 +69,16 @@ export async function GET(request: NextRequest) {
             created_at,
             updated_at
           `
-        )
-        .eq("store_id", storeId)
-        .eq("warehouse_id", warehouseId)
-        .order("name", {
-          ascending: true,
-        });
+      )
+      .eq("store_id", profile.store_id)
+      .eq("warehouse_id", warehouseId)
+      .order("name", { ascending: true });
 
     if (error) {
-      console.error(
-        "Error obteniendo ubicaciones:",
-        error
-      );
+      console.error("Error obteniendo ubicaciones:", error);
 
       return NextResponse.json(
-        {
-          error:
-            "No se pudieron cargar las ubicaciones.",
-        },
+        { error: "No se pudieron cargar las ubicaciones." },
         { status: 500 }
       );
     }
@@ -192,9 +93,7 @@ export async function GET(request: NextRequest) {
     );
 
     return NextResponse.json(
-      {
-        error: "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }
@@ -202,43 +101,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser();
+    const auth = await requireRole(CATALOG_WRITE_ROLES);
 
-    if (!user) {
-      return NextResponse.json(
-        {
-          error: "No autenticado.",
-        },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const storeId = await getUserStoreId(user.id);
+    const { supabase, profile } = auth;
 
-    if (!storeId) {
-      return NextResponse.json(
-        {
-          error:
-            "No se encontró la tienda del usuario.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const role = await getUserRole(user.id);
-
-    if (
-      !role ||
-      !["owner", "admin", "manager"].includes(role)
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No tienes permisos para crear ubicaciones.",
-        },
-        { status: 403 }
-      );
-    }
+    const storeId = profile.store_id;
 
     let body: Record<string, unknown>;
 
@@ -246,10 +117,7 @@ export async function POST(request: NextRequest) {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        {
-          error:
-            "El cuerpo de la solicitud no es válido.",
-        },
+        { error: "El cuerpo de la solicitud no es válido." },
         { status: 400 }
       );
     }
@@ -260,9 +128,7 @@ export async function POST(request: NextRequest) {
         : "";
 
     const name =
-      typeof body.name === "string"
-        ? body.name.trim()
-        : "";
+      typeof body.name === "string" ? body.name.trim() : "";
 
     const code =
       typeof body.code === "string"
@@ -288,44 +154,28 @@ export async function POST(request: NextRequest) {
 
     if (!warehouseId) {
       return NextResponse.json(
-        {
-          error:
-            "El almacén es obligatorio.",
-        },
+        { error: "El almacén es obligatorio." },
         { status: 400 }
       );
     }
 
     if (!name) {
       return NextResponse.json(
-        {
-          error:
-            "El nombre de la ubicación es obligatorio.",
-        },
+        { error: "El nombre de la ubicación es obligatorio." },
         { status: 400 }
       );
     }
 
     if (!code) {
       return NextResponse.json(
-        {
-          error:
-            "El código de la ubicación es obligatorio.",
-        },
+        { error: "El código de la ubicación es obligatorio." },
         { status: 400 }
       );
     }
 
-    if (
-      !VALID_LOCATION_TYPES.includes(
-        locationType
-      )
-    ) {
+    if (!VALID_LOCATION_TYPES.includes(locationType)) {
       return NextResponse.json(
-        {
-          error:
-            "El tipo de ubicación no es válido.",
-        },
+        { error: "El tipo de ubicación no es válido." },
         { status: 400 }
       );
     }
@@ -337,28 +187,18 @@ export async function POST(request: NextRequest) {
       body.capacity !== undefined &&
       body.capacity !== ""
     ) {
-      if (
-        typeof body.capacity === "number"
-      ) {
+      if (typeof body.capacity === "number") {
         capacity = body.capacity;
-      } else if (
-        typeof body.capacity === "string"
-      ) {
+      } else if (typeof body.capacity === "string") {
         capacity = Number(body.capacity);
       } else {
         return NextResponse.json(
-          {
-            error:
-              "La capacidad no es válida.",
-          },
+          { error: "La capacidad no es válida." },
           { status: 400 }
         );
       }
 
-      if (
-        !Number.isInteger(capacity) ||
-        capacity < 0
-      ) {
+      if (!Number.isInteger(capacity) || capacity < 0) {
         return NextResponse.json(
           {
             error:
@@ -369,12 +209,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const supabaseAdmin = getSupabaseAdmin();
-
     // Verificar que el almacén pertenezca
     // a la tienda del usuario.
     const { data: warehouse, error: warehouseError } =
-      await supabaseAdmin
+      await supabase
         .from("warehouses")
         .select("id, is_active")
         .eq("id", warehouseId)
@@ -383,9 +221,7 @@ export async function POST(request: NextRequest) {
 
     if (warehouseError || !warehouse) {
       return NextResponse.json(
-        {
-          error: "Almacén no encontrado.",
-        },
+        { error: "Almacén no encontrado." },
         { status: 404 }
       );
     }
@@ -401,13 +237,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Validación adicional antes de insertar.
-    const { data: duplicateLocation } =
-      await supabaseAdmin
-        .from("locations")
-        .select("id")
-        .eq("warehouse_id", warehouseId)
-        .eq("code", code)
-        .maybeSingle();
+    const { data: duplicateLocation } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("warehouse_id", warehouseId)
+      .eq("code", code)
+      .maybeSingle();
 
     if (duplicateLocation) {
       return NextResponse.json(
@@ -419,21 +254,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: location, error } =
-      await supabaseAdmin
-        .from("locations")
-        .insert({
-          store_id: storeId,
-          warehouse_id: warehouseId,
-          name,
-          code,
-          description,
-          location_type: locationType,
-          capacity,
-          is_active: isActive,
-        })
-        .select(
-          `
+    const { data: location, error } = await supabase
+      .from("locations")
+      .insert({
+        store_id: storeId,
+        warehouse_id: warehouseId,
+        name,
+        code,
+        description,
+        location_type: locationType,
+        capacity,
+        is_active: isActive,
+      })
+      .select(
+        `
             id,
             store_id,
             warehouse_id,
@@ -446,18 +280,13 @@ export async function POST(request: NextRequest) {
             created_at,
             updated_at
           `
-        )
-        .single();
+      )
+      .single();
 
     if (error || !location) {
-      console.error(
-        "Error creando ubicación:",
-        error
-      );
+      console.error("Error creando ubicación:", error);
 
-      if (
-        error?.code === "23505"
-      ) {
+      if (error?.code === "23505") {
         return NextResponse.json(
           {
             error:
@@ -468,11 +297,7 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json(
-        {
-          error:
-            error?.message ||
-            "No se pudo crear la ubicación.",
-        },
+        { error: "No se pudo crear la ubicación." },
         { status: 400 }
       );
     }
@@ -481,8 +306,7 @@ export async function POST(request: NextRequest) {
       {
         ok: true,
         location,
-        message:
-          "Ubicación creada correctamente.",
+        message: "Ubicación creada correctamente.",
       },
       { status: 201 }
     );
@@ -493,9 +317,7 @@ export async function POST(request: NextRequest) {
     );
 
     return NextResponse.json(
-      {
-        error: "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }

@@ -145,7 +145,18 @@ export default function DevolucionesPage() {
         );
       }
 
-      setSaleItems(data.sale?.sale_items ?? []);
+      const items = data.sale?.sale_items ?? [];
+
+      setSaleItems(items);
+
+      // Si la venta tiene un solo producto, lo seleccionamos
+      // de una vez para no obligar un clic extra.
+      if (items.length === 1) {
+        setForm((current) => ({
+          ...current,
+          saleItemId: items[0].id,
+        }));
+      }
     } catch (err) {
       console.error(err);
 

@@ -1,67 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetch-all";
-
-async function getAuthenticatedUser() {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    return null;
-  }
-
-  return user;
-}
-
-async function getUserProfile(userId: string) {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("store_id, role")
-    .eq("id", userId)
-    .single();
-
-  if (error || !data?.store_id) {
-    return null;
-  }
-
-  return data;
-}
+import {
+  INVENTORY_MANAGER_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    const auth = await requireUser();
 
-    const user = await getAuthenticatedUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const profile = await getUserProfile(user.id);
-
-    if (!profile) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario." },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const { searchParams } = new URL(request.url);
 
     const productId = searchParams.get("product_id");
-    const fromLocationId =
-      searchParams.get("from_location_id");
-    const toLocationId =
-      searchParams.get("to_location_id");
+    const fromLocationId = searchParams.get(
+      "from_location_id"
+    );
+    const toLocationId = searchParams.get("to_location_id");
 
     let query = supabase
       .from("inventory_transfers")
@@ -111,38 +72,25 @@ export async function GET(request: NextRequest) {
     }
 
     if (fromLocationId) {
-      query = query.eq(
-        "from_location_id",
-        fromLocationId
-      );
+      query = query.eq("from_location_id", fromLocationId);
     }
 
     if (toLocationId) {
-      query = query.eq(
-        "to_location_id",
-        toLocationId
-      );
+      query = query.eq("to_location_id", toLocationId);
     }
 
     // Orden estable para paginar.
     query = query.order("id");
 
-    const { data, error } = await fetchAllRows(
-      (from, to) => query.range(from, to)
+    const { data, error } = await fetchAllRows((from, to) =>
+      query.range(from, to)
     );
 
     if (error) {
-      console.error(
-        "Error obteniendo traslados:",
-        error
-      );
+      console.error("Error obteniendo traslados:", error);
 
       return NextResponse.json(
-        {
-          error:
-            error.message ||
-            "No se pudieron obtener los traslados.",
-        },
+        { error: "No se pudieron obtener los traslados." },
         { status: 400 }
       );
     }
@@ -157,12 +105,7 @@ export async function GET(request: NextRequest) {
     );
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }
@@ -170,47 +113,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
-    // 1. Usuario autenticado
-    const user = await getAuthenticatedUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    // 2. Perfil / tienda / rol
-    const profile = await getUserProfile(user.id);
+    const { supabase, profile } = auth;
 
-    if (!profile) {
-      return NextResponse.json(
-        {
-          error:
-            "No se encontró la tienda del usuario.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // 3. Validar permisos
-    if (
-      !["owner", "admin", "manager"].includes(
-        profile.role
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No tienes permisos para realizar traslados de inventario.",
-        },
-        { status: 403 }
-      );
-    }
-
-    // 4. Leer body
     let body: Record<string, unknown>;
 
     try {
@@ -226,18 +136,14 @@ export async function POST(request: NextRequest) {
     }
 
     const productId = body.product_id;
-    const fromWarehouseId =
-      body.from_warehouse_id;
-    const fromLocationId =
-      body.from_location_id;
-    const toWarehouseId =
-      body.to_warehouse_id;
-    const toLocationId =
-      body.to_location_id;
+    const fromWarehouseId = body.from_warehouse_id;
+    const fromLocationId = body.from_location_id;
+    const toWarehouseId = body.to_warehouse_id;
+    const toLocationId = body.to_location_id;
     const quantity = body.quantity;
     const reason = body.reason;
 
-    // 5. Validar campos obligatorios
+    // Validar campos obligatorios
     if (
       typeof productId !== "string" ||
       typeof fromWarehouseId !== "string" ||
@@ -254,7 +160,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 6. Validar cantidad
+    // Validar cantidad
     const parsedQuantity = Number(quantity);
 
     if (
@@ -270,7 +176,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 7. No permitir misma ubicación
+    // No permitir misma ubicación
     if (fromLocationId === toLocationId) {
       return NextResponse.json(
         {
@@ -281,7 +187,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 8. Ejecutar el RPC que ya comprobamos que funciona
+    // Ejecutar el RPC (también valida sesión, tienda y rol:
+    // assert_store_role).
     const { data, error } = await supabase.rpc(
       "transfer_inventory",
       {
@@ -311,20 +218,16 @@ export async function POST(request: NextRequest) {
           error:
             error.message ||
             "No se pudo realizar el traslado.",
-          details: error.details || null,
-          hint: error.hint || null,
-          code: error.code || null,
         },
         { status: 400 }
       );
     }
 
-    // 9. Traslado exitoso
+    // Traslado exitoso
     return NextResponse.json({
       ok: true,
       transfer: data,
-      message:
-        "Traslado realizado correctamente.",
+      message: "Traslado realizado correctamente.",
     });
   } catch (error) {
     console.error(
@@ -333,12 +236,7 @@ export async function POST(request: NextRequest) {
     );
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error interno del servidor.",
-      },
+      { error: "Error interno del servidor." },
       { status: 500 }
     );
   }

@@ -1,39 +1,20 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import {
+  INVENTORY_MANAGER_ROLES,
+  requireRole,
+} from "@/lib/auth/require-role";
 
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado." },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .single();
+    const { supabase, profile } = auth;
 
-    if (profileError || !profile?.store_id) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario." },
-        { status: 400 }
-      );
-    }
-
-    let body;
+    let body: Record<string, unknown>;
 
     try {
       body = await request.json();
@@ -51,12 +32,7 @@ export async function POST(
       );
     }
 
-    const {
-      barcode,
-      movement_type,
-      quantity,
-      reason,
-    } = body;
+    const { barcode, movement_type, quantity, reason } = body;
 
     if (!barcode) {
       return NextResponse.json(
@@ -65,11 +41,7 @@ export async function POST(
       );
     }
 
-    if (
-      !["entrada", "salida"].includes(
-        movement_type
-      )
-    ) {
+    if (!["entrada", "salida"].includes(movement_type as string)) {
       return NextResponse.json(
         {
           error:
@@ -79,50 +51,58 @@ export async function POST(
       );
     }
 
-    if (
-      !Number.isInteger(quantity) ||
-      quantity <= 0
-    ) {
+    if (!Number.isInteger(quantity) || (quantity as number) <= 0) {
       return NextResponse.json(
-        {
-          error:
-            "La cantidad debe ser mayor que 0.",
-        },
+        { error: "La cantidad debe ser mayor que 0." },
         { status: 400 }
       );
     }
 
     /*
      * Buscar producto por código de barras.
+     *
+     * maybeSingle(): si dos productos de la misma tienda quedaran con
+     * el mismo código de barras, no queremos un 500 ni aplicar el
+     * movimiento al primero que encuentre Postgres al azar.
      */
-    const { data: product, error: productError } =
-      await supabase
-        .from("products")
-        .select(`
+    const { data: products, error: productError } = await supabase
+      .from("products")
+      .select(`
+        id,
+        store_id,
+        name,
+        brand,
+        category,
+        pet_type,
+        presentation,
+        sku,
+        barcode,
+        stock,
+        minimum_stock,
+        maximum_stock,
+        sale_price,
+        purchase_price,
+        suppliers (
           id,
-          store_id,
-          name,
-          brand,
-          category,
-          pet_type,
-          presentation,
-          sku,
-          barcode,
-          stock,
-          minimum_stock,
-          maximum_stock,
-          sale_price,
-          purchase_price,
-          suppliers (
-            id,
-            name
-          )
-        `)
-        .eq("barcode", barcode)
-        .eq("store_id", profile.store_id)
-        .single();
+          name
+        )
+      `)
+      .eq("barcode", barcode)
+      .eq("store_id", profile.store_id);
 
-    if (productError || !product) {
+    if (productError) {
+      console.error(
+        "Error buscando producto por barcode:",
+        productError
+      );
+
+      return NextResponse.json(
+        { error: "No se pudo buscar el producto." },
+        { status: 400 }
+      );
+    }
+
+    if (!products || products.length === 0) {
       return NextResponse.json(
         {
           error:
@@ -132,21 +112,31 @@ export async function POST(
       );
     }
 
+    if (products.length > 1) {
+      return NextResponse.json(
+        {
+          error: `Código de barras duplicado: ${products.length} productos lo tienen asignado. Corrige el código de barras antes de continuar.`,
+        },
+        { status: 409 }
+      );
+    }
+
+    const product = products[0];
+
     /*
      * Registrar movimiento utilizando la función
      * centralizada de PostgreSQL.
      */
-    const { data: movement, error } =
-      await supabase.rpc(
-        "register_inventory_movement",
-        {
-          p_product_id: product.id,
-          p_movement_type: movement_type,
-          p_quantity: quantity,
-          p_reason: reason || null,
-          p_store_id: profile.store_id,
-        }
-      );
+    const { data: movement, error } = await supabase.rpc(
+      "register_inventory_movement",
+      {
+        p_product_id: product.id,
+        p_movement_type: movement_type,
+        p_quantity: quantity,
+        p_reason: typeof reason === "string" ? reason : null,
+        p_store_id: profile.store_id,
+      }
+    );
 
     if (error) {
       console.error(
@@ -198,7 +188,7 @@ export async function POST(
       return NextResponse.json({
         ok: true,
         movement,
-        product: product,
+        product,
       });
     }
 

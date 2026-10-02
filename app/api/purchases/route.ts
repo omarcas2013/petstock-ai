@@ -1,35 +1,20 @@
-﻿import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { NextRequest, NextResponse } from "next/server";
 import { bogotaStartOfDay, isValidDateKey } from "@/lib/dates";
+import {
+  INVENTORY_MANAGER_ROLES,
+  requireRole,
+  requireUser,
+} from "@/lib/auth/require-role";
 
 export async function GET() {
   try {
-    const supabase = await createClient();
+    const auth = await requireUser();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .single();
-
-    if (profileError || !profile?.store_id) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario" },
-        { status: 400 }
-      );
-    }
+    const { supabase, profile } = auth;
 
     const { data, error } = await supabase
       .from("purchases")
@@ -97,7 +82,7 @@ export async function GET() {
       console.error("Error GET /api/purchases:", error);
 
       return NextResponse.json(
-        { error: error.message },
+        { error: "No se pudieron obtener las compras." },
         { status: 400 }
       );
     }
@@ -109,10 +94,7 @@ export async function GET() {
     console.error("Error GET /api/purchases:", error);
 
     return NextResponse.json(
-      {
-        error: "Error interno del servidor",
-        details: error instanceof Error ? error.message : String(error),
-      },
+      { error: "Error interno del servidor" },
       { status: 500 }
     );
   }
@@ -120,21 +102,24 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const body = await request.json();
+    const { supabase, profile } = auth;
+
+    let body: Record<string, unknown>;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
+      );
+    }
 
     const supplierId = String(body.supplier_id || "").trim();
 
@@ -191,7 +176,7 @@ export async function POST(request: NextRequest) {
 
     const productIds = new Set<string>();
 
-    for (const item of items) {
+    for (const item of items as Record<string, unknown>[]) {
       const productId = String(item.product_id || "").trim();
       const quantity = Number(item.quantity);
       const unitCost = Number(item.unit_cost);
@@ -241,37 +226,29 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .single();
-
-    if (profileError || !profile?.store_id) {
-      return NextResponse.json(
-        { error: "No se encontró la tienda del usuario" },
-        { status: 400 }
-      );
-    }
-
-    const { data, error } = await supabase.rpc("create_purchase", {
-      p_store_id: profile.store_id,
-      p_supplier_id: supplierId,
-      p_document_number: documentNumber,
-      // purchase_date es timestamptz: la fecha se guarda
-      // como medianoche en Bogotá para que no se corra el día.
-      p_purchase_date: purchaseDate
-        ? bogotaStartOfDay(purchaseDate)
-        : new Date().toISOString(),
-      p_notes: notes,
-      p_items: normalizedItems,
-    });
+    const { data, error } = await supabase.rpc(
+      "create_purchase",
+      {
+        p_store_id: profile.store_id,
+        p_supplier_id: supplierId,
+        p_document_number: documentNumber,
+        // purchase_date es timestamptz: la fecha se guarda
+        // como medianoche en Bogotá para que no se corra el día.
+        p_purchase_date: purchaseDate
+          ? bogotaStartOfDay(purchaseDate)
+          : new Date().toISOString(),
+        p_notes: notes,
+        p_items: normalizedItems,
+      }
+    );
 
     if (error) {
       console.error("Error RPC create_purchase:", error);
 
       return NextResponse.json(
-        { error: error.message },
+        {
+          error: error.message || "No se pudo registrar la compra.",
+        },
         { status: 400 }
       );
     }
@@ -287,10 +264,7 @@ export async function POST(request: NextRequest) {
     console.error("Error POST /api/purchases:", error);
 
     return NextResponse.json(
-      {
-        error: "Error interno del servidor",
-        details: error instanceof Error ? error.message : String(error),
-      },
+      { error: "Error interno del servidor" },
       { status: 500 }
     );
   }
