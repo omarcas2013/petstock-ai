@@ -98,7 +98,10 @@ export default function ComprasPage() {
   const [items, setItems] = useState<PurchaseItem[]>([]);
 
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [quantity, setQuantity] = useState(1);
+  // Se guarda como texto para poder borrar el campo
+  // y escribir libremente; se valida al agregar.
+  const [quantityInput, setQuantityInput] =
+    useState("1");
   const [unitCost, setUnitCost] = useState(0);
 
   // =========================================================
@@ -369,9 +372,15 @@ export default function ComprasPage() {
       return;
     }
 
-    if (quantity <= 0) {
+    const quantity = Number(quantityInput);
+
+    if (
+      quantityInput.trim() === "" ||
+      !Number.isInteger(quantity) ||
+      quantity <= 0
+    ) {
       alert(
-        "La cantidad debe ser mayor que cero."
+        "La cantidad debe ser un número entero mayor que cero."
       );
       return;
     }
@@ -434,7 +443,7 @@ export default function ComprasPage() {
     }
 
     setSelectedProductId("");
-    setQuantity(1);
+    setQuantityInput("1");
     setUnitCost(0);
   }
 
@@ -452,7 +461,7 @@ export default function ComprasPage() {
     setDocumentNumber("");
     setItems([]);
     setSelectedProductId("");
-    setQuantity(1);
+    setQuantityInput("1");
     setUnitCost(0);
     setShowForm(false);
   }
@@ -1311,15 +1320,11 @@ export default function ComprasPage() {
                     <input
                       type="number"
                       min="1"
-                      value={quantity}
+                      step="1"
+                      value={quantityInput}
                       onChange={(event) =>
-                        setQuantity(
-                          Math.max(
-                            1,
-                            Number(
-                              event.target.value
-                            ) || 1
-                          )
+                        setQuantityInput(
+                          event.target.value
                         )
                       }
                       className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500"

@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  bogotaEndOfDay,
+  bogotaStartOfDay,
+  getBogotaDateKey,
+  getBogotaMonthStartKey,
+} from "@/lib/dates";
 
 type Product = {
   id: string;
@@ -21,18 +27,9 @@ type Movement = {
   products?: Product | null;
 };
 
+// "Hoy" en Bogotá, no en la zona del navegador.
 function getTodayString() {
-  const today = new Date();
-
-  const year = today.getFullYear();
-  const month = String(
-    today.getMonth() + 1
-  ).padStart(2, "0");
-  const day = String(
-    today.getDate()
-  ).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  return getBogotaDateKey();
 }
 
 export default function ReporteMovimientosPage() {
@@ -197,12 +194,12 @@ export default function ReporteMovimientosPage() {
             ) {
               const start =
                 new Date(
-                  `${startDate}T00:00:00`
+                  bogotaStartOfDay(startDate)
                 );
 
               const end =
                 new Date(
-                  `${endDate}T23:59:59.999`
+                  bogotaEndOfDay(endDate)
                 );
 
               matchesDate =
@@ -341,26 +338,11 @@ export default function ReporteMovimientosPage() {
   }
 
   function setThisMonth() {
-    const today = new Date();
-
-    const year =
-      today.getFullYear();
-
-    const month = String(
-      today.getMonth() + 1
-    ).padStart(2, "0");
-
-    const day = String(
-      today.getDate()
-    ).padStart(2, "0");
-
     setStartDate(
-      `${year}-${month}-01`
+      getBogotaMonthStartKey()
     );
 
-    setEndDate(
-      `${year}-${month}-${day}`
-    );
+    setEndDate(getTodayString());
   }
 
   return (

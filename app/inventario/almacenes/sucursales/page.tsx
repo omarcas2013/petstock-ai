@@ -232,6 +232,10 @@ export default function SucursalesPage() {
     setMessage("");
     setError("");
 
+    // Si se guardó, el botón queda deshabilitado
+    // hasta que se cierre el formulario.
+    let saved = false;
+
     try {
       const isEditing =
         editingBranch !== null;
@@ -290,9 +294,12 @@ export default function SucursalesPage() {
           : "Sucursal creada correctamente."
       );
 
+      saved = true;
+
       await loadBranches();
 
       window.setTimeout(() => {
+        setSaving(false);
         setFormOpen(false);
         setEditingBranch(null);
         setForm(emptyForm);
@@ -307,7 +314,9 @@ export default function SucursalesPage() {
           : "No se pudo guardar la sucursal."
       );
     } finally {
-      setSaving(false);
+      if (!saved) {
+        setSaving(false);
+      }
     }
   }
 

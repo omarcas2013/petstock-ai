@@ -2,6 +2,10 @@
 
 import Link from "next/link";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import {
+  detectCsvDelimiter,
+  parseEsCoInteger,
+} from "@/lib/quantity";
 
 type Product = {
   id: string;
@@ -33,6 +37,8 @@ type Movement = {
   quantity: number;
   reason: string | null;
   created_at: string;
+  stock_before: number | null;
+  stock_after: number | null;
   products:
     | {
         name: string;
@@ -421,6 +427,7 @@ export default function InventarioPage() {
     return new Intl.DateTimeFormat("es-CO", {
       dateStyle: "short",
       timeStyle: "short",
+      timeZone: "America/Bogota",
     }).format(new Date(date));
   }
 
@@ -455,6 +462,21 @@ export default function InventarioPage() {
 
     if (movement.movement_type === "salida") {
       return `-${movement.quantity}`;
+    }
+
+    // En un ajuste, quantity es el stock final:
+    // mostramos la variación real, como en /inventario/movimientos.
+    if (
+      movement.movement_type === "ajuste" &&
+      movement.stock_before !== null &&
+      movement.stock_after !== null
+    ) {
+      const difference =
+        movement.stock_after - movement.stock_before;
+
+      return difference > 0
+        ? `+${difference}`
+        : `${difference}`;
     }
 
     return movement.quantity.toString();
@@ -709,7 +731,10 @@ export default function InventarioPage() {
       .replace(/[\u0300-\u036f]/g, "");
   }
 
-  function parseCsv(content: string): string[][] {
+  function parseCsv(
+    content: string,
+    delimiter: "," | ";"
+  ): string[][] {
     const rows: string[][] = [];
 
     let row: string[] = [];
@@ -736,7 +761,7 @@ export default function InventarioPage() {
       }
 
       if (
-        character === "," &&
+        character === delimiter &&
         !insideQuotes
       ) {
         row.push(field);
@@ -814,7 +839,10 @@ export default function InventarioPage() {
 
       const content = await file.text();
 
-      const rows = parseCsv(content);
+      const rows = parseCsv(
+        content,
+        detectCsvDelimiter(content)
+      );
 
       if (rows.length < 2) {
         throw new Error(
@@ -861,6 +889,10 @@ export default function InventarioPage() {
 
       const parsedRows: FileInventoryRow[] = [];
 
+      // Filas con cantidad inválida: no se cargan
+      // y se reportan al usuario.
+      const invalidRows: number[] = [];
+
       for (
         let i = 1;
         i < rows.length;
@@ -876,16 +908,13 @@ export default function InventarioPage() {
           continue;
         }
 
+        // Formato es-CO: "1.000" son mil unidades.
         const parsedQuantity =
-          Number(rawQuantity);
+          parseEsCoInteger(rawQuantity);
 
-        if (
-          !Number.isInteger(parsedQuantity) ||
-          parsedQuantity < 0
-        ) {
-          throw new Error(
-            `Cantidad inválida en la fila ${i + 1}.`
-          );
+        if (parsedQuantity === null) {
+          invalidRows.push(i + 1);
+          continue;
         }
 
         parsedRows.push({
@@ -894,9 +923,21 @@ export default function InventarioPage() {
         });
       }
 
+      const invalidRowsMessage =
+        invalidRows.length > 0
+          ? ` Filas con cantidad inválida (no se cargaron): ${invalidRows
+              .slice(0, 10)
+              .join(", ")}${
+              invalidRows.length > 10
+                ? ` y ${invalidRows.length - 10} más`
+                : ""
+            }.`
+          : "";
+
       if (parsedRows.length === 0) {
         throw new Error(
-          "No encontramos registros válidos en el archivo."
+          "No encontramos registros válidos en el archivo." +
+            invalidRowsMessage
         );
       }
 
@@ -958,7 +999,7 @@ export default function InventarioPage() {
           notFound > 0
             ? ` y ${notFound} no encontrados`
             : ""
-        }.`
+        }.${invalidRowsMessage}`
       );
     } catch (error) {
       console.error(error);
