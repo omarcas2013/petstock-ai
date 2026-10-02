@@ -7,6 +7,7 @@ import {
   INVENTORY_MANAGER_ROLES,
   parseQuantity,
 } from "@/lib/quantity";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 type LoadItem = {
   sku: string;
@@ -318,15 +319,19 @@ export async function POST(
     const {
       data: products,
       error: productsError,
-    } = await supabase
-      .from("products")
-      .select(
-        "id, name, sku, stock, store_id"
-      )
-      .eq(
-        "store_id",
-        storeId
-      );
+    } = await fetchAllRows((from, to) =>
+      supabase
+        .from("products")
+        .select(
+          "id, name, sku, stock, store_id"
+        )
+        .eq(
+          "store_id",
+          storeId
+        )
+        .order("id")
+        .range(from, to)
+    );
 
     if (productsError) {
       console.error(

@@ -297,21 +297,36 @@ export default function ReporteMovimientosPage() {
         0
       );
 
+  /*
+   * En un ajuste, quantity es el stock final,
+   * no las unidades movidas. La variación real es
+   * stock_after - stock_before.
+   */
   const totalAdjustments =
     filteredMovements
       .filter(
         (movement) =>
           movement.movement_type.toLowerCase() ===
-          "ajuste"
+            "ajuste" &&
+          movement.stock_before !== null &&
+          movement.stock_after !== null
       )
       .reduce(
         (sum, movement) =>
           sum +
-          Number(
-            movement.quantity || 0
-          ),
+          Number(movement.stock_after) -
+          Number(movement.stock_before),
         0
       );
+
+  const netChange =
+    totalEntries -
+    totalExits +
+    totalAdjustments;
+
+  function formatSigned(value: number) {
+    return value > 0 ? `+${value}` : String(value);
+  }
 
   function handlePrint() {
     window.print();
@@ -664,11 +679,11 @@ export default function ReporteMovimientosPage() {
 
                 <div className="print-break rounded-2xl bg-white p-6 shadow-sm">
                   <p className="text-sm text-gray-500">
-                    Ajustes
+                    Variación por ajustes
                   </p>
 
                   <p className="mt-2 text-2xl font-bold text-yellow-600">
-                    {totalAdjustments}
+                    {formatSigned(totalAdjustments)}
                   </p>
                 </div>
               </div>
@@ -820,13 +835,11 @@ export default function ReporteMovimientosPage() {
                             colSpan={3}
                             className="px-4 py-4 text-right font-bold text-gray-900"
                           >
-                            TOTALES
+                            VARIACIÓN NETA DE STOCK
                           </td>
 
                           <td className="px-4 py-4 text-center font-bold text-gray-900">
-                            {totalEntries +
-                              totalExits +
-                              totalAdjustments}
+                            {formatSigned(netChange)}
                           </td>
 
                           <td className="px-4 py-4"></td>

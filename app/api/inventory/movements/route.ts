@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 export async function GET() {
   try {
@@ -31,7 +32,8 @@ export async function GET() {
       );
     }
 
-    const { data: movements, error } = await supabase
+    const { data: movements, error } = await fetchAllRows((from, to) =>
+      supabase
       .from("inventory_movements")
       .select(`
         id,
@@ -51,7 +53,10 @@ export async function GET() {
       // inventory_movements no tiene store_id:
       // filtramos por la tienda del producto.
       .eq("products.store_id", profile.store_id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to)
+    );
 
     if (error) {
       console.error("Error cargando movimientos:", error);

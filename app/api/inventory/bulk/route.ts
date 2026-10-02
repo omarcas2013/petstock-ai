@@ -5,6 +5,7 @@ import {
   INVENTORY_MANAGER_ROLES,
   parseQuantity,
 } from "@/lib/quantity";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 type BulkItem = {
   product_id?: string;
@@ -384,7 +385,8 @@ export async function POST(
       getSupabaseAdmin();
 
     const { data: products, error } =
-      await supabase
+      await fetchAllRows((from, to) =>
+        supabase
         .from("products")
         .select(
           `
@@ -396,7 +398,10 @@ export async function POST(
             store_id
           `
         )
-        .eq("store_id", storeId);
+        .eq("store_id", storeId)
+        .order("id")
+        .range(from, to)
+      );
 
     if (error) {
       console.error(
@@ -426,19 +431,19 @@ export async function POST(
     const productsById =
       new Map<
         string,
-        (typeof products)[number]
+        NonNullable<typeof products>[number]
       >();
 
     const productsBySku =
       new Map<
         string,
-        (typeof products)[number]
+        NonNullable<typeof products>[number]
       >();
 
     const productsByBarcode =
       new Map<
         string,
-        (typeof products)[number]
+        NonNullable<typeof products>[number]
       >();
 
     for (const product of products || []) {
@@ -491,7 +496,7 @@ export async function POST(
       const item of normalizedItems
     ) {
       let product:
-        | (typeof products)[number]
+        | NonNullable<typeof products>[number]
         | undefined;
 
       /*

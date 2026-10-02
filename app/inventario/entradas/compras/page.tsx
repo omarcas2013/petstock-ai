@@ -30,7 +30,8 @@ type Purchase = {
   supplier_id?: string | null;
   status: string;
   total?: number | null;
-  supplier?: Supplier | null;
+  // GET /api/purchases devuelve la relación como "suppliers".
+  suppliers?: Supplier | null;
   purchase_items?: PurchaseItem[];
 };
 
@@ -396,6 +397,17 @@ export default function ComprasPage() {
       (item) =>
         item.product_id === selectedProductId
     );
+
+    if (
+      existingItem &&
+      existingItem.unit_cost !== unitCost
+    ) {
+      alert(
+        `${product.name} ya está en la compra con otro costo unitario. ` +
+          "Quítalo y vuelve a agregarlo con la cantidad total y el costo correcto."
+      );
+      return;
+    }
 
     if (existingItem) {
       setItems((currentItems) =>
@@ -1087,7 +1099,7 @@ export default function ComprasPage() {
 
                           <td className="px-5 py-4 text-sm text-slate-700">
                             {purchase
-                              .supplier?.name ||
+                              .suppliers?.name ||
                               "Sin proveedor"}
                           </td>
 

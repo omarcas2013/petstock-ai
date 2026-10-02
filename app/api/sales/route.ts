@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 type SaleItemInput = {
   product_id: string;
@@ -55,7 +56,8 @@ export async function GET() {
     // OBTENER VENTAS
     // ==========================================================
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
       .from("sales")
       .select(
         `
@@ -81,7 +83,10 @@ export async function GET() {
       `
       )
       .eq("store_id", profile.store_id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to)
+    );
 
     if (error) {
       console.error("Error obteniendo ventas:", error);

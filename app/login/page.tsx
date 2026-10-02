@@ -4,6 +4,29 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+/*
+ * El proxy envía al login con ?redirect=/ruta-original.
+ * Solo aceptamos rutas internas ("/algo", no "//dominio")
+ * para no redirigir a otros sitios.
+ */
+function getRedirectPath() {
+  const redirect = new URLSearchParams(
+    window.location.search
+  ).get("redirect");
+
+  if (
+    !redirect ||
+    !redirect.startsWith("/") ||
+    redirect.startsWith("//") ||
+    redirect.startsWith("/\\") ||
+    redirect.startsWith("/login")
+  ) {
+    return "/";
+  }
+
+  return redirect;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -31,7 +54,7 @@ export default function LoginPage() {
         throw loginError;
       }
 
-      router.replace("/");
+      router.replace(getRedirectPath());
       router.refresh();
     } catch (error) {
       console.error("ERROR DE LOGIN:", error);

@@ -49,6 +49,9 @@ export async function GET() {
           products (
             name,
             sku
+          ),
+          sale_items (
+            unit_price
           )
         )
       `)
@@ -67,8 +70,35 @@ export async function GET() {
       );
     }
 
+    /*
+     * customer_return_items no guarda precio:
+     * lo tomamos de la línea de venta original.
+     */
+    const returnsWithPrices = (returns ?? []).map(
+      (customerReturn) => ({
+        ...customerReturn,
+        customer_return_items: (
+          customerReturn.customer_return_items ?? []
+        ).map(({ sale_items, ...item }) => {
+          const saleItem = Array.isArray(sale_items)
+            ? sale_items[0]
+            : sale_items;
+
+          const unitPrice = Number(
+            saleItem?.unit_price ?? 0
+          );
+
+          return {
+            ...item,
+            unit_price: unitPrice,
+            subtotal: unitPrice * item.quantity,
+          };
+        }),
+      })
+    );
+
     return NextResponse.json({
-      returns: returns ?? [],
+      returns: returnsWithPrices,
     });
   } catch (error) {
     console.error(

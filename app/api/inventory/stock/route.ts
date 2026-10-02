@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { parseQuantity } from "@/lib/quantity";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 function getSupabaseAdmin() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -217,8 +218,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Orden estable para paginar.
+    query = query.order("id");
+
     const { data: stock, error } =
-      await query;
+      await fetchAllRows((from, to) =>
+        query.range(from, to)
+      );
 
     if (error) {
       console.error(

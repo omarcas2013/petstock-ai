@@ -86,7 +86,8 @@ export default function Sidebar() {
     if (href === "/ventas") {
       return (
         pathname === "/ventas" ||
-        pathname.startsWith("/ventas/")
+        (pathname.startsWith("/ventas/") &&
+          !pathname.startsWith("/ventas/historial"))
       );
     }
 
