@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   createClient as createServerSupabase,
 } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 function getSupabaseAdmin() {
   const supabaseUrl =
@@ -95,7 +96,8 @@ export async function GET() {
       getSupabaseAdmin();
 
     const { data, error } =
-      await supabase
+      await fetchAllRows((from, to) =>
+        supabase
         .from("sales")
         .select(`
           id,
@@ -120,7 +122,10 @@ export async function GET() {
         .eq("store_id", storeId)
         .order("created_at", {
           ascending: false,
-        });
+        })
+        .order("id")
+        .range(from, to)
+      );
 
     if (error) {
       console.error(

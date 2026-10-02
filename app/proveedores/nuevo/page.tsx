@@ -77,7 +77,9 @@ try {
       ? error.message
       : "No se pudo crear el proveedor."
   );
-} finally {
+
+  // Solo se reactiva el botón si falló: en el caso
+  // exitoso seguimos deshabilitados hasta navegar.
   setSaving(false);
 }
 

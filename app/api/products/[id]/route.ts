@@ -747,6 +747,12 @@ export async function PUT(
         ? body.is_active
         : currentProduct.is_active;
 
+    const managesLots =
+      typeof body.manages_lots ===
+      "boolean"
+        ? body.manages_lots
+        : currentProduct.manages_lots;
+
     /*
     |--------------------------------------------------------------------------
     | ACTUALIZAR PRODUCTO
@@ -811,6 +817,9 @@ export async function PUT(
 
         is_active:
           isActive,
+
+        manages_lots:
+          managesLots,
 
         image_url:
           imageUrl,

@@ -3,11 +3,22 @@ import { createClient } from "@supabase/supabase-js";
 import {
   createClient as createServerSupabase,
 } from "@/lib/supabase/server";
+import {
+  INVENTORY_MANAGER_ROLES,
+  parseQuantity,
+} from "@/lib/quantity";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 type LoadItem = {
   sku: string;
   quantity: number;
   reason?: string | null;
+};
+
+type RawLoadItem = {
+  sku?: unknown;
+  quantity?: unknown;
+  reason?: unknown;
 };
 
 function getSupabaseAdmin() {
@@ -55,7 +66,7 @@ async function getAuthenticatedUser() {
   return user;
 }
 
-async function getUserStoreId(
+async function getUserProfile(
   userId: string
 ) {
   const supabase =
@@ -64,7 +75,7 @@ async function getUserStoreId(
   const { data, error } =
     await supabase
       .from("profiles")
-      .select("store_id")
+      .select("store_id, role")
       .eq("id", userId)
       .single();
 
@@ -80,7 +91,10 @@ async function getUserStoreId(
     );
   }
 
-  return data.store_id;
+  return data as {
+    store_id: string;
+    role: string | null;
+  };
 }
 
 export async function POST(
@@ -109,12 +123,55 @@ export async function POST(
 
     /*
      * ---------------------------------------------------------
+     * TIENDA Y PERMISOS
+     * ---------------------------------------------------------
+     */
+
+    const profile =
+      await getUserProfile(
+        user.id
+      );
+
+    const storeId = profile.store_id;
+
+    if (
+      !profile.role ||
+      !INVENTORY_MANAGER_ROLES.includes(
+        profile.role
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "No tienes permisos para cargar inventario.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    /*
+     * ---------------------------------------------------------
      * BODY
      * ---------------------------------------------------------
      */
 
-    const body =
-      await request.json();
+    let body: { items?: unknown } | null;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "El cuerpo de la solicitud no es JSON válido.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     const rawItems =
       body?.items;
@@ -152,18 +209,18 @@ export async function POST(
      * ---------------------------------------------------------
      */
 
-    const items: LoadItem[] =
-      rawItems.map(
-        (item: LoadItem) => ({
+    const parsedItems =
+      (rawItems as RawLoadItem[]).map(
+        (item) => ({
           sku:
-            typeof item.sku ===
+            typeof item?.sku ===
             "string"
               ? item.sku.trim()
               : "",
           quantity:
-            Number(item.quantity),
+            parseQuantity(item?.quantity),
           reason:
-            typeof item.reason ===
+            typeof item?.reason ===
             "string"
               ? item.reason.trim()
               : "Inventario inicial",
@@ -172,11 +229,11 @@ export async function POST(
 
     for (
       let index = 0;
-      index < items.length;
+      index < parsedItems.length;
       index++
     ) {
       const item =
-        items[index];
+        parsedItems[index];
 
       if (!item.sku) {
         return NextResponse.json(
@@ -190,6 +247,7 @@ export async function POST(
       }
 
       if (
+        item.quantity === null ||
         !Number.isInteger(
           item.quantity
         ) ||
@@ -205,6 +263,9 @@ export async function POST(
         );
       }
     }
+
+    // Ya validado: todas las cantidades son enteros >= 0.
+    const items = parsedItems as LoadItem[];
 
     /*
      * ---------------------------------------------------------
@@ -240,17 +301,6 @@ export async function POST(
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * TIENDA
-     * ---------------------------------------------------------
-     */
-
-    const storeId =
-      await getUserStoreId(
-        user.id
-      );
-
     const supabase =
       getSupabaseAdmin();
 
@@ -269,15 +319,19 @@ export async function POST(
     const {
       data: products,
       error: productsError,
-    } = await supabase
-      .from("products")
-      .select(
-        "id, name, sku, stock, store_id"
-      )
-      .eq(
-        "store_id",
-        storeId
-      );
+    } = await fetchAllRows((from, to) =>
+      supabase
+        .from("products")
+        .select(
+          "id, name, sku, stock, store_id"
+        )
+        .eq(
+          "store_id",
+          storeId
+        )
+        .order("id")
+        .range(from, to)
+    );
 
     if (productsError) {
       console.error(

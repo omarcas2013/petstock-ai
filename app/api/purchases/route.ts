@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { bogotaStartOfDay, isValidDateKey } from "@/lib/dates";
 
 export async function GET() {
   try {
@@ -142,8 +143,18 @@ export async function POST(request: NextRequest) {
       : null;
 
     const purchaseDate = body.purchase_date
-      ? String(body.purchase_date)
+      ? String(body.purchase_date).trim()
       : null;
+
+    if (purchaseDate && !isValidDateKey(purchaseDate)) {
+      return NextResponse.json(
+        {
+          error:
+            "La fecha de compra no es válida. Usa el formato AAAA-MM-DD.",
+        },
+        { status: 400 }
+      );
+    }
 
     const notes = body.notes
       ? String(body.notes).trim()
@@ -247,8 +258,10 @@ export async function POST(request: NextRequest) {
       p_store_id: profile.store_id,
       p_supplier_id: supplierId,
       p_document_number: documentNumber,
+      // purchase_date es timestamptz: la fecha se guarda
+      // como medianoche en Bogotá para que no se corra el día.
       p_purchase_date: purchaseDate
-        ? new Date(purchaseDate).toISOString()
+        ? bogotaStartOfDay(purchaseDate)
         : new Date().toISOString(),
       p_notes: notes,
       p_items: normalizedItems,

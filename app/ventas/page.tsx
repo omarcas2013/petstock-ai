@@ -12,7 +12,17 @@ type Product = {
   sale_price: number;
   stock: number;
   minimum_stock: number;
+  is_active?: boolean;
 };
+
+// Los productos inactivos no se pueden vender.
+function onlyActive(products: unknown): Product[] {
+  return Array.isArray(products)
+    ? (products as Product[]).filter(
+        (product) => product.is_active !== false
+      )
+    : [];
+}
 
 type CartItem = {
   product: Product;
@@ -100,11 +110,7 @@ export default function VentasPage() {
       }
 
       setProducts(
-        Array.isArray(
-          result.products
-        )
-          ? result.products
-          : []
+        onlyActive(result.products)
       );
     } catch (error) {
       console.error(error);
@@ -201,11 +207,7 @@ export default function VentasPage() {
         }
 
         setProducts(
-          Array.isArray(
-            productsResult.products
-          )
-            ? productsResult.products
-            : []
+          onlyActive(productsResult.products)
         );
 
         setSales(
@@ -487,14 +489,21 @@ export default function VentasPage() {
         );
       }
 
-      setMessage(
-        `Venta registrada correctamente. Total: ${formatPrice(
-          result.sale.total
-        )}`
-      );
-
+      // La venta ya quedó registrada: vaciamos el carrito
+      // antes de cualquier otra cosa para que un reintento
+      // no la duplique.
       setCart([]);
       setCustomerName("");
+
+      const saleTotal = Number(
+        result.sale?.total ?? total
+      );
+
+      setMessage(
+        `Venta registrada correctamente. Total: ${formatPrice(
+          saleTotal
+        )}`
+      );
 
       await loadProducts();
       await loadSales();

@@ -7,6 +7,12 @@ import {
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
+import {
+  bogotaEndOfDay,
+  bogotaStartOfDay,
+  getBogotaDateKey,
+  getBogotaMonthStartKey,
+} from "@/lib/dates";
 
 type Product = {
   id: string;
@@ -41,18 +47,9 @@ type ProductSummary = {
   revenue: number;
 };
 
+// "Hoy" en Bogotá, no en la zona del navegador.
 function getTodayString() {
-  const today = new Date();
-
-  const year = today.getFullYear();
-  const month = String(
-    today.getMonth() + 1,
-  ).padStart(2, "0");
-  const day = String(
-    today.getDate(),
-  ).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  return getBogotaDateKey();
 }
 
 export default function ReporteVentasPage() {
@@ -153,11 +150,11 @@ export default function ReporteVentasPage() {
     }
 
     const start = new Date(
-      `${startDate}T00:00:00`,
+      bogotaStartOfDay(startDate),
     );
 
     const end = new Date(
-      `${endDate}T23:59:59.999`,
+      bogotaEndOfDay(endDate),
     );
 
     return sales
@@ -350,20 +347,8 @@ export default function ReporteVentasPage() {
   }
 
   function setThisMonth() {
-    const today = new Date();
-
-    const year = today.getFullYear();
-
-    const month = String(
-      today.getMonth() + 1,
-    ).padStart(2, "0");
-
-    const day = String(
-      today.getDate(),
-    ).padStart(2, "0");
-
-    const firstDay = `${year}-${month}-01`;
-    const lastDay = `${year}-${month}-${day}`;
+    const firstDay = getBogotaMonthStartKey();
+    const lastDay = getTodayString();
 
     setStartDate(firstDay);
     setEndDate(lastDay);

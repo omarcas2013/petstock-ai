@@ -1,6 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 function getSupabaseAdmin() {
   const supabaseUrl =
@@ -290,19 +291,23 @@ export async function GET(
     const {
       data,
       error,
-    } = await supabase
-      .from("products")
-      .select(`
-        *,
-        suppliers (
-          id,
-          name
-        )
-      `)
-      .eq("store_id", storeId)
-      .order("created_at", {
-        ascending: false,
-      });
+    } = await fetchAllRows((from, to) =>
+      supabase
+        .from("products")
+        .select(`
+          *,
+          suppliers (
+            id,
+            name
+          )
+        `)
+        .eq("store_id", storeId)
+        .order("created_at", {
+          ascending: false,
+        })
+        .order("id")
+        .range(from, to)
+    );
 
     if (error) {
       console.error(
@@ -850,6 +855,9 @@ export async function POST(
           reorderPoint,
 
         is_active: true,
+
+        manages_lots:
+          body.manages_lots === true,
 
         image_url:
           imageUrl,

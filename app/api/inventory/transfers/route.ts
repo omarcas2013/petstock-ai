@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 async function getAuthenticatedUser() {
   const supabase = await createClient();
@@ -123,7 +124,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { data, error } = await query;
+    // Orden estable para paginar.
+    query = query.order("id");
+
+    const { data, error } = await fetchAllRows(
+      (from, to) => query.range(from, to)
+    );
 
     if (error) {
       console.error(

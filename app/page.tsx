@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getBogotaDateKey } from "@/lib/dates";
 
 type Product = {
   id: string;
@@ -55,15 +56,6 @@ type DailySales = {
   total: number;
   count: number;
 };
-
-function getBogotaDateKey(date: Date) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Bogota",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
 
 function isSameBogotaDay(
   dateString: string,

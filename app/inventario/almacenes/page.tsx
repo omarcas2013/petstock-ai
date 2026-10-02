@@ -372,6 +372,10 @@ export default function AlmacenesPage() {
     setMessage("");
     setError("");
 
+    // Si se guardó, el botón queda deshabilitado
+    // hasta que se cierre el formulario.
+    let saved = false;
+
     try {
       const isEditing =
         editingWarehouse !== null;
@@ -428,10 +432,13 @@ export default function AlmacenesPage() {
           : "Almacén creado correctamente."
       );
 
+      saved = true;
+
       await loadWarehouses();
 
       window.setTimeout(
         () => {
+          setSaving(false);
           setFormOpen(false);
           setEditingWarehouse(
             null
@@ -453,7 +460,9 @@ export default function AlmacenesPage() {
           : "No se pudo guardar el almacén."
       );
     } finally {
-      setSaving(false);
+      if (!saved) {
+        setSaving(false);
+      }
     }
   }
 

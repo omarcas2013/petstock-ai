@@ -19,7 +19,37 @@ export async function POST(
       );
     }
 
-    const body = await request.json();
+    const { data: profile, error: profileError } =
+      await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", user.id)
+        .single();
+
+    if (profileError || !profile?.store_id) {
+      return NextResponse.json(
+        { error: "No se encontró la tienda del usuario." },
+        { status: 400 }
+      );
+    }
+
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
+      );
+    }
+
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es válido." },
+        { status: 400 }
+      );
+    }
 
     const {
       barcode,
@@ -89,6 +119,7 @@ export async function POST(
           )
         `)
         .eq("barcode", barcode)
+        .eq("store_id", profile.store_id)
         .single();
 
     if (productError || !product) {
@@ -113,7 +144,7 @@ export async function POST(
           p_movement_type: movement_type,
           p_quantity: quantity,
           p_reason: reason || null,
-          p_store_id: product.store_id,
+          p_store_id: profile.store_id,
         }
       );
 
@@ -160,6 +191,7 @@ export async function POST(
           )
         `)
         .eq("id", product.id)
+        .eq("store_id", profile.store_id)
         .single();
 
     if (updatedError || !updatedProduct) {

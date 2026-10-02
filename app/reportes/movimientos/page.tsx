@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  bogotaEndOfDay,
+  bogotaStartOfDay,
+  getBogotaDateKey,
+  getBogotaMonthStartKey,
+} from "@/lib/dates";
 
 type Product = {
   id: string;
@@ -21,18 +27,9 @@ type Movement = {
   products?: Product | null;
 };
 
+// "Hoy" en Bogotá, no en la zona del navegador.
 function getTodayString() {
-  const today = new Date();
-
-  const year = today.getFullYear();
-  const month = String(
-    today.getMonth() + 1
-  ).padStart(2, "0");
-  const day = String(
-    today.getDate()
-  ).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  return getBogotaDateKey();
 }
 
 export default function ReporteMovimientosPage() {
@@ -197,12 +194,12 @@ export default function ReporteMovimientosPage() {
             ) {
               const start =
                 new Date(
-                  `${startDate}T00:00:00`
+                  bogotaStartOfDay(startDate)
                 );
 
               const end =
                 new Date(
-                  `${endDate}T23:59:59.999`
+                  bogotaEndOfDay(endDate)
                 );
 
               matchesDate =
@@ -297,21 +294,36 @@ export default function ReporteMovimientosPage() {
         0
       );
 
+  /*
+   * En un ajuste, quantity es el stock final,
+   * no las unidades movidas. La variación real es
+   * stock_after - stock_before.
+   */
   const totalAdjustments =
     filteredMovements
       .filter(
         (movement) =>
           movement.movement_type.toLowerCase() ===
-          "ajuste"
+            "ajuste" &&
+          movement.stock_before !== null &&
+          movement.stock_after !== null
       )
       .reduce(
         (sum, movement) =>
           sum +
-          Number(
-            movement.quantity || 0
-          ),
+          Number(movement.stock_after) -
+          Number(movement.stock_before),
         0
       );
+
+  const netChange =
+    totalEntries -
+    totalExits +
+    totalAdjustments;
+
+  function formatSigned(value: number) {
+    return value > 0 ? `+${value}` : String(value);
+  }
 
   function handlePrint() {
     window.print();
@@ -326,26 +338,11 @@ export default function ReporteMovimientosPage() {
   }
 
   function setThisMonth() {
-    const today = new Date();
-
-    const year =
-      today.getFullYear();
-
-    const month = String(
-      today.getMonth() + 1
-    ).padStart(2, "0");
-
-    const day = String(
-      today.getDate()
-    ).padStart(2, "0");
-
     setStartDate(
-      `${year}-${month}-01`
+      getBogotaMonthStartKey()
     );
 
-    setEndDate(
-      `${year}-${month}-${day}`
-    );
+    setEndDate(getTodayString());
   }
 
   return (
@@ -664,11 +661,11 @@ export default function ReporteMovimientosPage() {
 
                 <div className="print-break rounded-2xl bg-white p-6 shadow-sm">
                   <p className="text-sm text-gray-500">
-                    Ajustes
+                    Variación por ajustes
                   </p>
 
                   <p className="mt-2 text-2xl font-bold text-yellow-600">
-                    {totalAdjustments}
+                    {formatSigned(totalAdjustments)}
                   </p>
                 </div>
               </div>
@@ -820,13 +817,11 @@ export default function ReporteMovimientosPage() {
                             colSpan={3}
                             className="px-4 py-4 text-right font-bold text-gray-900"
                           >
-                            TOTALES
+                            VARIACIÓN NETA DE STOCK
                           </td>
 
                           <td className="px-4 py-4 text-center font-bold text-gray-900">
-                            {totalEntries +
-                              totalExits +
-                              totalAdjustments}
+                            {formatSigned(netChange)}
                           </td>
 
                           <td className="px-4 py-4"></td>

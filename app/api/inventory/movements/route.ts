@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetch-all";
 
 export async function GET() {
   try {
@@ -17,7 +18,22 @@ export async function GET() {
       );
     }
 
-    const { data: movements, error } = await supabase
+    const { data: profile, error: profileError } =
+      await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", user.id)
+        .single();
+
+    if (profileError || !profile?.store_id) {
+      return NextResponse.json(
+        { error: "No se encontró la tienda del usuario." },
+        { status: 400 }
+      );
+    }
+
+    const { data: movements, error } = await fetchAllRows((from, to) =>
+      supabase
       .from("inventory_movements")
       .select(`
         id,
@@ -28,12 +44,19 @@ export async function GET() {
         created_at,
         stock_before,
         stock_after,
-        products (
+        products!inner (
           name,
-          sku
+          sku,
+          store_id
         )
       `)
-      .order("created_at", { ascending: false });
+      // inventory_movements no tiene store_id:
+      // filtramos por la tienda del producto.
+      .eq("products.store_id", profile.store_id)
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to)
+    );
 
     if (error) {
       console.error("Error cargando movimientos:", error);
@@ -73,7 +96,37 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json();
+    const { data: profile, error: profileError } =
+      await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", user.id)
+        .single();
+
+    if (profileError || !profile?.store_id) {
+      return NextResponse.json(
+        { error: "No se encontró la tienda del usuario." },
+        { status: 400 }
+      );
+    }
+
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
+      );
+    }
+
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es válido." },
+        { status: 400 }
+      );
+    }
 
     const {
       product_id,
@@ -100,9 +153,12 @@ export async function POST(request: Request) {
       );
     }
 
+    // En un ajuste la cantidad es el stock final (puede ser 0);
+    // en entradas y salidas debe ser mayor que 0.
     if (
       !Number.isInteger(quantity) ||
-      quantity < 0
+      quantity < 0 ||
+      (movement_type !== "ajuste" && quantity === 0)
     ) {
       return NextResponse.json(
         { error: "Cantidad no válida." },
@@ -111,14 +167,15 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Obtener la tienda a la que pertenece
-     * el producto.
+     * Verificar que el producto pertenece
+     * a la tienda del usuario.
      */
     const { data: product, error: productError } =
       await supabase
         .from("products")
         .select("id, store_id")
         .eq("id", product_id)
+        .eq("store_id", profile.store_id)
         .single();
 
     if (productError || !product) {
@@ -140,7 +197,7 @@ export async function POST(request: Request) {
           p_movement_type: movement_type,
           p_quantity: quantity,
           p_reason: reason || null,
-          p_store_id: product.store_id,
+          p_store_id: profile.store_id,
         }
       );
 
