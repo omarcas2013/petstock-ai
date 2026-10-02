@@ -167,6 +167,8 @@ export default function WarehouseStockPage() {
 
   const loadData = async () => {
     if (!warehouseId) {
+      setLoading(false);
+      setError("No se indicó el almacén.");
       return;
     }
 
