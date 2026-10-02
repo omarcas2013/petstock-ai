@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
+import {
+  INVENTORY_MANAGER_ROLES,
+  parseQuantity,
+} from "@/lib/quantity";
 
 type BulkItem = {
   product_id?: string;
   sku?: string | null;
   barcode?: string | null;
-  quantity: number;
+  quantity: number | string | null;
   reason?: string | null;
 };
 
@@ -58,7 +62,7 @@ async function getAuthenticatedUser() {
   return user;
 }
 
-async function getUserStoreId(
+async function getUserProfile(
   userId: string
 ) {
   const supabase =
@@ -67,7 +71,7 @@ async function getUserStoreId(
   const { data, error } =
     await supabase
       .from("profiles")
-      .select("store_id")
+      .select("store_id, role")
       .eq("id", userId)
       .single();
 
@@ -83,7 +87,10 @@ async function getUserStoreId(
     );
   }
 
-  return data.store_id;
+  return data as {
+    store_id: string;
+    role: string | null;
+  };
 }
 
 export async function POST(
@@ -116,8 +123,27 @@ export async function POST(
      * ============================================================
      */
 
-    const storeId =
-      await getUserStoreId(user.id);
+    const profile =
+      await getUserProfile(user.id);
+
+    const storeId = profile.store_id;
+
+    if (
+      !profile.role ||
+      !INVENTORY_MANAGER_ROLES.includes(
+        profile.role
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "No tienes permisos para realizar cargas masivas de inventario.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
 
     /*
      * ============================================================
@@ -125,8 +151,34 @@ export async function POST(
      * ============================================================
      */
 
-    const body =
-      (await request.json()) as BulkRequest;
+    let body: BulkRequest;
+
+    try {
+      body =
+        (await request.json()) as BulkRequest;
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "El cuerpo de la solicitud no es JSON válido.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        {
+          error:
+            "El cuerpo de la solicitud no es válido.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     const items = Array.isArray(
       body.items
@@ -138,7 +190,9 @@ export async function POST(
       body.movement_type || "entrada";
 
     const globalReason =
-      body.reason?.trim() || null;
+      typeof body.reason === "string"
+        ? body.reason.trim() || null
+        : null;
 
 
     /*
@@ -218,7 +272,7 @@ export async function POST(
             .trim() || null;
 
         const quantity =
-          Number(item.quantity);
+          parseQuantity(item.quantity);
 
         const reason =
           item.reason
@@ -247,6 +301,7 @@ export async function POST(
     const invalidQuantity =
       normalizedItems.find(
         (item) =>
+          item.quantity === null ||
           !Number.isInteger(
             item.quantity
           ) ||
@@ -481,7 +536,7 @@ export async function POST(
       resolvedItems.push({
         row: item.row,
         product_id: product.id,
-        quantity: item.quantity,
+        quantity: item.quantity as number,
         reason: item.reason,
         product_name:
           product.name,

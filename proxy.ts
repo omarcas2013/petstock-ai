@@ -60,6 +60,22 @@ export async function proxy(request: NextRequest) {
    * Si no hay usuario y está intentando acceder
    * a una ruta protegida, lo mandamos al login.
    */
+  /*
+   * Las rutas de API responden 401 en JSON.
+   * Si las redirigimos al login, el fetch del
+   * cliente recibe HTML y falla con
+   * "Unexpected token '<'".
+   */
+  if (!user && pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      {
+        error:
+          "Tu sesión expiró. Vuelve a iniciar sesión.",
+      },
+      { status: 401 }
+    );
+  }
+
   if (!user && !isPublicRoute) {
     const loginUrl = request.nextUrl.clone();
 

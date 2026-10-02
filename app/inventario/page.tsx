@@ -318,7 +318,11 @@ export default function InventarioPage() {
         loadMovements(),
       ]);
 
+      // El botón sigue deshabilitado hasta que se cierre
+      // el modal, para que un segundo clic no registre
+      // el mismo movimiento dos veces.
       window.setTimeout(() => {
+        setMovementLoading(false);
         setMovementOpen(false);
         setSelectedProduct(null);
         setQuantity("");
@@ -333,7 +337,7 @@ export default function InventarioPage() {
           ? error.message
           : "No se pudo registrar el movimiento."
       );
-    } finally {
+
       setMovementLoading(false);
     }
   }
