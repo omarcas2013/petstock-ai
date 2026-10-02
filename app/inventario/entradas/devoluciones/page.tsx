@@ -25,7 +25,6 @@ type SaleItem = {
         id: string;
         name: string;
         sku: string | null;
-        stock: number;
       }
     | null;
 };
@@ -134,7 +133,7 @@ export default function DevolucionesPage() {
       setError("");
 
       const response = await fetch(
-        `/api/sales/${saleId}/items`
+        `/api/sales/${saleId}`
       );
 
       const data = await response.json();
@@ -146,7 +145,7 @@ export default function DevolucionesPage() {
         );
       }
 
-      setSaleItems(data.items ?? []);
+      setSaleItems(data.sale?.sale_items ?? []);
     } catch (err) {
       console.error(err);
 

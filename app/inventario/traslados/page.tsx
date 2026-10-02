@@ -77,24 +77,20 @@ export default function TrasladosPage() {
       const [
         productsResponse,
         warehousesResponse,
-        locationsResponse,
         stockResponse,
       ] = await Promise.all([
         fetch("/api/products"),
         fetch("/api/inventory/warehouses"),
-        fetch("/api/inventory/locations"),
         fetch("/api/inventory/stock"),
       ]);
 
       const [
         productsResult,
         warehousesResult,
-        locationsResult,
         stockResult,
       ] = await Promise.all([
         productsResponse.json(),
         warehousesResponse.json(),
-        locationsResponse.json(),
         stockResponse.json(),
       ]);
 
@@ -112,13 +108,6 @@ export default function TrasladosPage() {
         );
       }
 
-      if (!locationsResponse.ok) {
-        throw new Error(
-          locationsResult.error ||
-            "No se pudieron cargar las ubicaciones."
-        );
-      }
-
       if (!stockResponse.ok) {
         throw new Error(
           stockResult.error ||
@@ -133,18 +122,40 @@ export default function TrasladosPage() {
         )
       );
 
-      setWarehouses(
-        (warehousesResult.warehouses || []).filter(
-          (warehouse: Warehouse) =>
-            warehouse.is_active
-        )
+      const activeWarehouses: Warehouse[] = (
+        warehousesResult.warehouses || []
+      ).filter(
+        (warehouse: Warehouse) =>
+          warehouse.is_active
+      );
+
+      setWarehouses(activeWarehouses);
+
+      // La API de ubicaciones exige warehouse_id,
+      // así que las pedimos por cada almacén activo.
+      const locationsByWarehouse = await Promise.all(
+        activeWarehouses.map(async (warehouse) => {
+          const response = await fetch(
+            `/api/inventory/locations?warehouse_id=${encodeURIComponent(warehouse.id)}`
+          );
+
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              result.error ||
+                "No se pudieron cargar las ubicaciones."
+            );
+          }
+
+          return (result.locations || []) as Location[];
+        })
       );
 
       setLocations(
-        (locationsResult.locations || []).filter(
-          (location: Location) =>
-            location.is_active
-        )
+        locationsByWarehouse
+          .flat()
+          .filter((location) => location.is_active)
       );
 
       setStock(stockResult.stock || []);

@@ -1036,7 +1036,7 @@ export default function InventarioPage() {
             </Link>
 
             <Link
-              href="/inventario/almacenes/traslados"
+              href="/inventario/traslados"
               className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-indigo-50 px-5 py-3 font-medium text-indigo-700 hover:bg-indigo-100"
             >
               ↔ Traslados
