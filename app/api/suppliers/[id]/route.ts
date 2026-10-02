@@ -215,6 +215,19 @@ export async function DELETE(
     if (error) {
       console.error("ERROR ELIMINANDO PROVEEDOR:", error);
 
+      // 23503 = foreign_key_violation: el proveedor tiene productos
+      // o compras asociadas y no se puede borrar sin antes
+      // reasignarlos o eliminarlos.
+      if (error.code === "23503") {
+        return NextResponse.json(
+          {
+            error:
+              "No se puede eliminar: el proveedor tiene productos o compras asociadas.",
+          },
+          { status: 409 }
+        );
+      }
+
       return NextResponse.json(
         { error: "No se pudo eliminar el proveedor." },
         { status: 400 }

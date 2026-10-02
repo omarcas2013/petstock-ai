@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   CATALOG_WRITE_ROLES,
+  hideCostFields,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
@@ -57,24 +58,6 @@ function parseNonNegativeInteger(
   return number;
 }
 
-/**
- * employee no puede ver el costo de compra (matriz de roles).
- */
-function hideCostIfNeeded<T extends { purchase_price?: unknown }>(
-  product: T,
-  role: string
-): T {
-  if (role !== "employee") {
-    return product;
-  }
-
-  const withoutCost: Record<string, unknown> = { ...product };
-
-  delete withoutCost.purchase_price;
-
-  return withoutCost as T;
-}
-
 /*
 |--------------------------------------------------------------------------
 | GET /api/products/[id]
@@ -117,7 +100,7 @@ export async function GET(
     }
 
     return NextResponse.json({
-      product: hideCostIfNeeded(data, profile.role),
+      product: hideCostFields(data, profile.role, ["purchase_price"]),
     });
   } catch (error) {
     console.error("ERROR OBTENIENDO PRODUCTO:", error);

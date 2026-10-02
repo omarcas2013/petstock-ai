@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import {
   CATALOG_WRITE_ROLES,
+  hideCostFields,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
@@ -62,24 +63,6 @@ function parseNonNegativeInteger(
   }
 
   return number;
-}
-
-/**
- * employee no puede ver el costo de compra (matriz de roles).
- */
-function hideCostIfNeeded<T extends { purchase_price?: unknown }>(
-  product: T,
-  role: string
-): T {
-  if (role !== "employee") {
-    return product;
-  }
-
-  const withoutCost: Record<string, unknown> = { ...product };
-
-  delete withoutCost.purchase_price;
-
-  return withoutCost as T;
 }
 
 /*
@@ -146,7 +129,7 @@ export async function GET(request: Request) {
       }
 
       return NextResponse.json({
-        product: hideCostIfNeeded(data, profile.role),
+        product: hideCostFields(data, profile.role, ["purchase_price"]),
       });
     }
 
@@ -186,7 +169,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       products: (data || []).map((product) =>
-        hideCostIfNeeded(product, profile.role)
+        hideCostFields(product, profile.role, ["purchase_price"])
       ),
     });
   } catch (error) {

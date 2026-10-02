@@ -5,6 +5,7 @@ import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type LoadItem = {
   sku: string;
@@ -285,9 +286,10 @@ export async function POST(request: Request) {
 
         return NextResponse.json(
           {
-            error:
-              movementError.message ||
-              `No se pudo actualizar el SKU ${item.sku}.`,
+            error: `SKU ${item.sku}: ${rpcErrorMessage(
+              movementError,
+              "no se pudo actualizar."
+            )}`,
             results,
           },
           { status: 400 }

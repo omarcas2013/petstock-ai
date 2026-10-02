@@ -4,6 +4,7 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type InventoryMode =
   | "global"
@@ -338,9 +339,10 @@ export async function POST(
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo registrar la recepción de la compra.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar la recepción de la compra."
+          ),
         },
         { status: 400 }
       );

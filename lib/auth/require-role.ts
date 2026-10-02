@@ -90,12 +90,32 @@ function unauthenticated(): AuthFailure {
   };
 }
 
+function profileLookupFailed(): AuthFailure {
+  return {
+    ok: false,
+    response: NextResponse.json(
+      { error: "Error interno del servidor" },
+      { status: 500 }
+    ),
+  };
+}
+
 function noStore(): AuthFailure {
   return {
     ok: false,
     response: NextResponse.json(
       { error: "No se encontró la tienda del usuario" },
       { status: 400 }
+    ),
+  };
+}
+
+function noRole(): AuthFailure {
+  return {
+    ok: false,
+    response: NextResponse.json(
+      { error: "No tienes permisos para esta acción" },
+      { status: 403 }
     ),
   };
 }
@@ -136,12 +156,34 @@ export async function requireUser(): Promise<AuthResult> {
     .eq("id", user.id)
     .single();
 
-  if (
-    profileError ||
-    !profile?.store_id ||
-    !profile.role
-  ) {
+  /*
+   * Tres casos distintos, tres respuestas distintas:
+   *
+   * - La consulta falló por una razón que no es "no encontrado"
+   *   (conexión, permisos de la propia tabla profiles, etc.):
+   *   es un error nuestro, no del usuario -> 500 genérico, sin
+   *   detalle de Postgres.
+   * - El perfil existe pero no tiene tienda asignada: el usuario
+   *   quedó mal configurado -> 400, mensaje explicativo.
+   * - El perfil tiene tienda pero no tiene rol: también es una
+   *   cuenta mal configurada, pero la tratamos como "sin permisos"
+   *   -> 403, igual que un rol no autorizado.
+   */
+  if (profileError) {
+    console.error(
+      "Error consultando el perfil del usuario:",
+      profileError
+    );
+
+    return profileLookupFailed();
+  }
+
+  if (!profile?.store_id) {
     return noStore();
+  }
+
+  if (!profile.role) {
+    return noRole();
   }
 
   return {
@@ -179,4 +221,37 @@ export async function requireRole(
   }
 
   return auth;
+}
+
+/**
+ * Oculta campos de costo (purchase_price, unit_cost, subtotal, total
+ * de una compra, etc.) cuando el rol no está en COST_VIEW_ROLES.
+ *
+ * Única función que decide "¿puede este rol ver costos?": las rutas
+ * que devuelven costos la usan en vez de repetir
+ * `COST_VIEW_ROLES.includes(role)` cada una por su cuenta.
+ *
+ * Uso típico:
+ *
+ *   hideCostFields(product, profile.role, ["purchase_price"])
+ *
+ * Para un registro con un arreglo anidado (por ejemplo, las líneas de
+ * una compra), se llama una vez por cada elemento del arreglo.
+ */
+export function hideCostFields<T extends Record<string, unknown>>(
+  record: T,
+  role: Role,
+  fields: readonly string[]
+): T {
+  if (COST_VIEW_ROLES.includes(role)) {
+    return record;
+  }
+
+  const masked: Record<string, unknown> = { ...record };
+
+  for (const field of fields) {
+    masked[field] = null;
+  }
+
+  return masked as T;
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 export async function GET() {
   try {
@@ -245,9 +246,10 @@ export async function POST(request: Request) {
 
       return NextResponse.json(
         {
-          error:
-            rpcError.message ||
-            "No se pudo registrar la devolución.",
+          error: rpcErrorMessage(
+            rpcError,
+            "No se pudo registrar la devolución."
+          ),
         },
         { status: 400 }
       );

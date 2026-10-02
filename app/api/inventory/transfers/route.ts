@@ -5,6 +5,7 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 export async function GET(request: NextRequest) {
   try {
@@ -215,9 +216,10 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo realizar el traslado.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo realizar el traslado."
+          ),
         },
         { status: 400 }
       );

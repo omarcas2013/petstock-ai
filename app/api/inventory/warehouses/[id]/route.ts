@@ -561,18 +561,40 @@ export async function DELETE(
       );
     }
 
-    const { error: deleteError } = await supabase
-      .from("warehouses")
-      .delete()
-      .eq("id", id)
-      .eq("store_id", storeId);
+    const { data: deleted, error: deleteError } =
+      await supabase
+        .from("warehouses")
+        .delete()
+        .eq("id", id)
+        .eq("store_id", storeId)
+        .select("id")
+        .maybeSingle();
 
     if (deleteError) {
       console.error("ERROR ELIMINANDO ALMACÉN:", deleteError);
 
+      // 23503 = foreign_key_violation: el almacén tiene ubicaciones,
+      // existencias o compras recibidas asociadas.
+      if (deleteError.code === "23503") {
+        return NextResponse.json(
+          {
+            error:
+              "No se puede eliminar: el almacén tiene ubicaciones o existencias asociadas.",
+          },
+          { status: 409 }
+        );
+      }
+
       return NextResponse.json(
         { error: "No se pudo eliminar el almacén." },
         { status: 400 }
+      );
+    }
+
+    if (!deleted) {
+      return NextResponse.json(
+        { error: "Almacén no encontrado." },
+        { status: 404 }
       );
     }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type SaleItemInput = {
   product_id: string;
@@ -239,9 +240,10 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo registrar la venta.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar la venta."
+          ),
         },
         { status: 400 }
       );

@@ -3,51 +3,18 @@ import { bogotaStartOfDay, isValidDateKey } from "@/lib/dates";
 import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
-  requireUser,
 } from "@/lib/auth/require-role";
-
-type PurchaseRow = {
-  subtotal: number | null;
-  total: number | null;
-  purchase_items?:
-    | { unit_cost: number | null; subtotal: number | null }[]
-    | null;
-};
-
-/**
- * employee no puede ver costos de compra (matriz de roles):
- * ni el total de la compra ni el costo unitario de cada línea.
- */
-function hidePurchaseCosts<T extends PurchaseRow>(
-  purchase: T,
-  role: string
-): T {
-  if (role !== "employee") {
-    return purchase;
-  }
-
-  const withoutCosts: Record<string, unknown> = {
-    ...purchase,
-    subtotal: null,
-    total: null,
-  };
-
-  if (Array.isArray(purchase.purchase_items)) {
-    withoutCosts.purchase_items = purchase.purchase_items.map(
-      (item) => ({
-        ...item,
-        unit_cost: null,
-        subtotal: null,
-      })
-    );
-  }
-
-  return withoutCosts as T;
-}
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 export async function GET() {
   try {
-    const auth = await requireUser();
+    /*
+     * La matriz de roles no le da "compras y recepciones" a employee.
+     * Antes de esta ruta exigir el rol, un employee podía listar las
+     * compras igual (solo con los costos ocultos). Ahora directamente
+     * no ve el listado.
+     */
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
 
     if (!auth.ok) {
       return auth.response;
@@ -127,9 +94,7 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      purchases: (data ?? []).map((purchase) =>
-        hidePurchaseCosts(purchase, profile.role)
-      ),
+      purchases: data ?? [],
     });
   } catch (error) {
     console.error("Error GET /api/purchases:", error);
@@ -288,7 +253,10 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(
         {
-          error: error.message || "No se pudo registrar la compra.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar la compra."
+          ),
         },
         { status: 400 }
       );

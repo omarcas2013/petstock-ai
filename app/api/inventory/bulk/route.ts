@@ -5,6 +5,7 @@ import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type BulkItem = {
   product_id?: string;
@@ -440,9 +441,10 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           ok: false,
-          error:
-            rpcError.message ||
-            "No se pudo procesar la carga masiva.",
+          error: rpcErrorMessage(
+            rpcError,
+            "No se pudo procesar la carga masiva."
+          ),
         },
         { status: 400 }
       );

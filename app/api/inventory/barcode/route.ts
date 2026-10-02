@@ -3,6 +3,7 @@ import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 export async function POST(request: Request) {
   try {
@@ -146,9 +147,10 @@ export async function POST(request: Request) {
 
       return NextResponse.json(
         {
-          error:
-            error.message ||
-            "No se pudo registrar el movimiento.",
+          error: rpcErrorMessage(
+            error,
+            "No se pudo registrar el movimiento."
+          ),
         },
         { status: 400 }
       );
