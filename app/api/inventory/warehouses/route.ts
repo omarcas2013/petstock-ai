@@ -4,6 +4,7 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { escapeLikePattern } from "@/lib/supabase/like";
 
 type WarehousePayload = {
   name?: unknown;
@@ -295,7 +296,7 @@ export async function POST(request: Request) {
       .from("warehouses")
       .select("id")
       .eq("store_id", storeId)
-      .ilike("name", name);
+      .ilike("name", escapeLikePattern(name));
 
     duplicateNameQuery = branchId
       ? duplicateNameQuery.eq("branch_id", branchId)

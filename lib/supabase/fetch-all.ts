@@ -32,6 +32,8 @@ export async function fetchAllRows<T, E>(
 ): Promise<PageResult<T, E>> {
   const rows: T[] = [];
 
+  let lastPageSize = 0;
+
   for (
     let from = 0;
     from < MAX_ROWS;
@@ -49,10 +51,20 @@ export async function fetchAllRows<T, E>(
     const page = data ?? [];
 
     rows.push(...page);
+    lastPageSize = page.length;
 
     if (page.length < PAGE_SIZE) {
       break;
     }
+  }
+
+  // Si la última página vino llena justo al llegar al tope,
+  // es probable que haya más filas que nunca pedimos: avisamos
+  // en el log en vez de devolver datos truncados en silencio.
+  if (rows.length >= MAX_ROWS && lastPageSize === PAGE_SIZE) {
+    console.warn(
+      `fetchAllRows: se alcanzó el tope de ${MAX_ROWS} filas; la lectura puede estar incompleta.`
+    );
   }
 
   return { data: rows, error: null };

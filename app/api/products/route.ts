@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import {
+  buildProductSelect,
+  flattenProductCost,
+  type ProductRow,
+} from "@/lib/products/select";
+import {
   CATALOG_WRITE_ROLES,
-  hideCostFields,
+  COST_VIEW_ROLES,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
@@ -81,6 +86,13 @@ export async function GET(request: Request) {
 
     const { supabase, profile } = auth;
 
+    const canViewCost = COST_VIEW_ROLES.includes(profile.role);
+
+    const select = buildProductSelect({
+      includeCost: canViewCost,
+      extra: "suppliers ( id, name )",
+    });
+
     const { searchParams } = new URL(request.url);
 
     const barcode = searchParams.get("barcode")?.trim();
@@ -94,16 +106,13 @@ export async function GET(request: Request) {
     if (barcode) {
       const { data, error } = await supabase
         .from("products")
-        .select(`
-          *,
-          suppliers (
-            id,
-            name
-          )
-        `)
+        .select(select)
         .eq("store_id", profile.store_id)
         .eq("barcode", barcode)
-        .maybeSingle();
+        .maybeSingle() as unknown as {
+          data: ProductRow | null;
+          error: { message: string } | null;
+        };
 
       if (error) {
         console.error(
@@ -129,7 +138,7 @@ export async function GET(request: Request) {
       }
 
       return NextResponse.json({
-        product: hideCostFields(data, profile.role, ["purchase_price"]),
+        product: flattenProductCost(data),
       });
     }
 
@@ -142,18 +151,15 @@ export async function GET(request: Request) {
     const { data, error } = await fetchAllRows((from, to) =>
       supabase
         .from("products")
-        .select(`
-          *,
-          suppliers (
-            id,
-            name
-          )
-        `)
+        .select(select)
         .eq("store_id", profile.store_id)
         .order("created_at", { ascending: false })
         .order("id")
         .range(from, to)
-    );
+    ) as unknown as {
+      data: ProductRow[] | null;
+      error: { message: string } | null;
+    };
 
     if (error) {
       console.error(
@@ -168,9 +174,7 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
-      products: (data || []).map((product) =>
-        hideCostFields(product, profile.role, ["purchase_price"])
-      ),
+      products: (data || []).map(flattenProductCost),
     });
   } catch (error) {
     console.error(
@@ -265,6 +269,13 @@ export async function POST(request: Request) {
     |--------------------------------------------------------------------------
     | PRECIOS
     |--------------------------------------------------------------------------
+    |
+    | El costo de compra (purchase_price) ya NO vive en products: se
+    | guarda en product_costs, después de crear el producto (ver más
+    | abajo). CATALOG_WRITE_ROLES y COST_VIEW_ROLES son el mismo
+    | conjunto de roles (owner/admin/manager), así que quien llega
+    | hasta aquí siempre puede fijar el costo.
+    |
     */
 
     const purchasePrice = parseNonNegativeNumber(
@@ -495,6 +506,11 @@ export async function POST(request: Request) {
     |--------------------------------------------------------------------------
     | CREAR PRODUCTO
     |--------------------------------------------------------------------------
+    |
+    | purchase_price ya no se envía aquí: products.purchase_price no
+    | se toca (sigue existiendo hasta la fase B, pero ninguna ruta
+    | debe leerla ni escribirla). El costo se guarda aparte, abajo.
+    |
     */
 
     const { data, error } = await supabase
@@ -512,7 +528,6 @@ export async function POST(request: Request) {
         unit_of_measure: unitOfMeasure,
         sku,
         barcode,
-        purchase_price: purchasePrice,
         sale_price: salePrice,
         tax_rate: taxRate,
         tax_type: taxType,
@@ -529,8 +544,16 @@ export async function POST(request: Request) {
          */
         stock: 0,
       })
-      .select()
-      .single();
+      .select(
+        buildProductSelect({
+          includeCost: false,
+          extra: "suppliers ( id, name )",
+        })
+      )
+      .single() as unknown as {
+        data: ProductRow | null;
+        error: { code?: string; message: string } | null;
+      };
 
     if (error) {
       console.error(
@@ -558,11 +581,85 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!data) {
+      console.error(
+        "POST /api/products: insert sin error pero sin datos."
+      );
+
+      return NextResponse.json(
+        { error: "No se pudo crear el producto." },
+        { status: 500 }
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GUARDAR COSTO
+    |--------------------------------------------------------------------------
+    |
+    | Upsert, no insert: el trigger sync_product_costs_trigger (tanda 3,
+    | migración product_costs_fase_a) ya pudo haber creado esta fila
+    | con costo 0 al insertar el producto (sigue copiando desde
+    | products.purchase_price mientras ese trigger exista, y acá no la
+    | tocamos, así que queda en su valor por defecto).
+    |
+    */
+
+    const { error: costError } = await supabase
+      .from("product_costs")
+      .upsert(
+        {
+          product_id: data.id,
+          store_id: profile.store_id,
+          purchase_price: purchasePrice,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "product_id" }
+      );
+
+    if (costError) {
+      console.error(
+        "ERROR GUARDANDO COSTO DEL PRODUCTO:",
+        costError
+      );
+
+      /*
+       * El producto SÍ se creó (el insert de arriba ya tuvo éxito):
+       * devolver 400 aquí hacía pensar al cliente que la creación
+       * completa había fallado, arriesgando un reintento que
+       * duplicara el producto. En vez de eso, 201 con un aviso; el
+       * costo real que quedó guardado es el que puso el trigger de
+       * sincronización (0, no el que pidió el usuario), así que se
+       * consulta para no informar un valor que no es el real.
+       */
+      const { data: actualCost } = await supabase
+        .from("product_costs")
+        .select("purchase_price")
+        .eq("product_id", data.id)
+        .maybeSingle();
+
+      return NextResponse.json(
+        {
+          ok: true,
+          warning:
+            "El producto se creó, pero no se pudo guardar el costo de compra. Edítalo para intentarlo de nuevo.",
+          message: "Producto guardado correctamente.",
+          product: {
+            ...data,
+            purchase_price: Number(
+              actualCost?.purchase_price ?? 0
+            ),
+          },
+        },
+        { status: 201 }
+      );
+    }
+
     return NextResponse.json(
       {
         ok: true,
         message: "Producto guardado correctamente.",
-        product: data,
+        product: { ...data, purchase_price: purchasePrice },
       },
       { status: 201 }
     );

@@ -1,13 +1,53 @@
-import { NextResponse } from "next/server";
-import { fetchAllRows } from "@/lib/supabase/fetch-all";
+import { NextRequest, NextResponse } from "next/server";
 import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import {
+  escapeLikePattern,
+  quoteOrFilterValue,
+} from "@/lib/supabase/like";
+import { rangedQuery } from "@/lib/supabase/paginate";
 
-export async function GET() {
+const MOVEMENTS_SELECT = `
+  id,
+  product_id,
+  movement_type,
+  quantity,
+  reason,
+  created_at,
+  stock_before,
+  stock_after,
+  products!inner (
+    name,
+    sku,
+    store_id
+  )
+`;
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
+
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireUser();
 
@@ -17,31 +57,108 @@ export async function GET() {
 
     const { supabase, profile } = auth;
 
-    const { data: movements, error } = await fetchAllRows(
-      (from, to) =>
-        supabase
-          .from("inventory_movements")
-          .select(`
-        id,
-        product_id,
-        movement_type,
-        quantity,
-        reason,
-        created_at,
-        stock_before,
-        stock_after,
-        products!inner (
-          name,
-          sku,
-          store_id
-        )
-      `)
-          // inventory_movements no tiene store_id:
-          // filtramos por la tienda del producto.
-          .eq("products.store_id", profile.store_id)
-          .order("created_at", { ascending: false })
-          .order("id")
-          .range(from, to)
+    const { searchParams } = new URL(request.url);
+
+    const { limit, offset } = parsePageParams(searchParams);
+
+    const search = (searchParams.get("search") ?? "").trim();
+    const typeFilter = (
+      searchParams.get("type") ?? "todos"
+    ).trim();
+
+    /*
+     * PostgREST rechaza (PGRST100, "failed to parse logic tree")
+     * un .or() de primer nivel que mezcle columnas de la tabla base
+     * (reason) con columnas de una relación embebida (products.name,
+     * products.sku) — confirmado contra la API real. Para poder
+     * buscar "reason O producto" en una sola condición OR, primero
+     * se resuelve qué productos coinciden por nombre/SKU (acotado a
+     * la tienda) y esos ids se agregan como product_id.in.(...) al
+     * OR final, que ya solo usa columnas propias de
+     * inventory_movements.
+     */
+    let matchingProductIds: string[] = [];
+
+    if (search) {
+      const pattern = quoteOrFilterValue(
+        `%${escapeLikePattern(search)}%`
+      );
+
+      const { data: matchingProducts, error: productsError } =
+        await supabase
+          .from("products")
+          .select("id")
+          .eq("store_id", profile.store_id)
+          .or(`name.ilike.${pattern},sku.ilike.${pattern}`)
+          .limit(200);
+
+      if (productsError) {
+        console.error(
+          "Error buscando productos para el filtro de movimientos:",
+          productsError
+        );
+
+        return NextResponse.json(
+          { error: "No se pudieron cargar los movimientos." },
+          { status: 500 }
+        );
+      }
+
+      matchingProductIds = (matchingProducts ?? []).map(
+        (product) => product.id
+      );
+    }
+
+    let orFilter: string | null = null;
+
+    if (search) {
+      const pattern = quoteOrFilterValue(
+        `%${escapeLikePattern(search)}%`
+      );
+
+      const conditions = [`reason.ilike.${pattern}`];
+
+      if (matchingProductIds.length > 0) {
+        conditions.push(
+          `product_id.in.(${matchingProductIds.join(",")})`
+        );
+      }
+
+      orFilter = conditions.join(",");
+    }
+
+    let dataQuery = supabase
+      .from("inventory_movements")
+      .select(MOVEMENTS_SELECT, { count: "exact" })
+      // inventory_movements no tiene store_id:
+      // filtramos por la tienda del producto.
+      .eq("products.store_id", profile.store_id);
+
+    let countQuery = supabase
+      .from("inventory_movements")
+      .select("id, products!inner(store_id)", {
+        count: "exact",
+        head: true,
+      })
+      .eq("products.store_id", profile.store_id);
+
+    if (typeFilter !== "todos") {
+      dataQuery = dataQuery.eq("movement_type", typeFilter);
+      countQuery = countQuery.eq("movement_type", typeFilter);
+    }
+
+    if (orFilter) {
+      dataQuery = dataQuery.or(orFilter);
+      countQuery = countQuery.or(orFilter);
+    }
+
+    dataQuery = dataQuery
+      .order("created_at", { ascending: false })
+      .order("id");
+
+    const { data: movements, error, count } = await rangedQuery(
+      () => dataQuery.range(offset, offset + limit - 1),
+      () => countQuery
     );
 
     if (error) {
@@ -55,6 +172,9 @@ export async function GET() {
 
     return NextResponse.json({
       movements: movements ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error(error);

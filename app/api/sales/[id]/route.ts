@@ -63,10 +63,85 @@ export async function GET(
       );
     }
 
+    /*
+     * tanda 3, Parte B #8: el máximo a devolver es lo que QUEDA por
+     * devolver (vendido - ya devuelto), no lo vendido. Sumamos las
+     * devoluciones ya "confirmada" (register_customer_return no deja
+     * devolver más de lo disponible, así que solo las confirmadas
+     * cuentan; las "cancelada" no restan).
+     */
+    const saleItems = Array.isArray(data.sale_items)
+      ? data.sale_items
+      : [];
+
+    const saleItemIds = saleItems.map((item) => item.id);
+
+    const alreadyReturnedByItem = new Map<string, number>();
+
+    if (saleItemIds.length > 0) {
+      const { data: returnedRows, error: returnedError } =
+        await supabase
+          .from("customer_return_items")
+          .select(
+            "sale_item_id, quantity, customer_returns!inner(status)"
+          )
+          .in("sale_item_id", saleItemIds)
+          .eq("customer_returns.status", "confirmada");
+
+      if (returnedError) {
+        console.error(
+          "ERROR CONSULTANDO DEVOLUCIONES PREVIAS:",
+          returnedError
+        );
+
+        /*
+         * Si esta consulta falla, no sabemos cuánto ya se devolvió:
+         * asumir 0 dejaría remaining_to_return = quantity (vendido),
+         * reabriendo exactamente el bug que esto corrige. Mejor
+         * fallar la respuesta que dar un máximo de devolución
+         * incorrecto.
+         */
+        return NextResponse.json(
+          {
+            error:
+              "No se pudo verificar cuánto de esta venta ya fue devuelto.",
+          },
+          { status: 500 }
+        );
+      }
+
+      for (const row of returnedRows ?? []) {
+        const current =
+          alreadyReturnedByItem.get(row.sale_item_id) ?? 0;
+
+        alreadyReturnedByItem.set(
+          row.sale_item_id,
+          current + row.quantity
+        );
+      }
+    }
+
+    const sale = {
+      ...data,
+      sale_items: saleItems.map((item) => {
+        const alreadyReturned =
+          alreadyReturnedByItem.get(item.id) ?? 0;
+
+        return {
+          ...item,
+          already_returned: alreadyReturned,
+          remaining_to_return: Math.max(
+            0,
+            item.quantity - alreadyReturned
+          ),
+        };
+      }),
+    };
+
     return NextResponse.json(
       {
         ok: true,
-        sale: data,
+        sale,
       },
       { status: 200 }
     );

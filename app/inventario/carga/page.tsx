@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useMemo, useRef, useState } from "react";
 
 type Product = {
   id: string;
@@ -64,6 +64,11 @@ export default function InventarioCargaPage() {
   const [previewRows, setPreviewRows] =
     useState<PreviewRow[]>([]);
 
+  // Un id por cada vista previa (no por cada clic en "Aplicar"): si el
+  // usuario reintenta tras un error de red sobre la MISMA vista
+  // previa, se reutiliza; si carga datos nuevos, se genera uno nuevo.
+  const requestIdRef = useRef<string | null>(null);
+
   const [previewOpen, setPreviewOpen] =
     useState(false);
 
@@ -71,6 +76,11 @@ export default function InventarioCargaPage() {
     useState("Inventario inicial");
 
   const [message, setMessage] = useState("");
+
+  // 403 de POST /api/inventory/initial-load (solo manager+): esta
+  // página no tiene otra forma de saberlo de antemano, porque
+  // GET /api/products es accesible para cualquier rol.
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const [applying, setApplying] =
     useState(false);
@@ -291,6 +301,7 @@ export default function InventarioCargaPage() {
     const rows =
       validateManualRows();
 
+    requestIdRef.current = crypto.randomUUID();
     setPreviewRows(rows);
     setPreviewOpen(true);
   }
@@ -581,6 +592,7 @@ export default function InventarioCargaPage() {
         };
       });
 
+    requestIdRef.current = crypto.randomUUID();
     setPreviewRows(rows);
     setPreviewOpen(true);
   }
@@ -678,14 +690,35 @@ export default function InventarioCargaPage() {
 
           body: JSON.stringify({
             items,
+            request_id:
+              requestIdRef.current ??
+              (requestIdRef.current =
+                crypto.randomUUID()),
           }),
         }
       );
 
+      if (response.status === 403) {
+        setAccessDenied(true);
+        return;
+      }
+
       const result =
         await response.json();
 
-      if (!response.ok) {
+      /*
+       * tanda 3, auditoría de Parte B: si un reintento (red lenta,
+       * doble clic) llega con el mismo request_id que un envío que
+       * SÍ se aplicó, la RPC lo rechaza con este mensaje exacto. Eso
+       * no es un fallo para el usuario: su carga ya quedó aplicada
+       * la primera vez, así que se trata igual que un éxito en vez
+       * de mostrar un error que lo haría reintentar de nuevo.
+       */
+      const isDuplicateRequest =
+        !response.ok &&
+        result.error === "Esta carga ya fue procesada.";
+
+      if (!response.ok && !isDuplicateRequest) {
         const details =
           Array.isArray(
             result.details
@@ -713,6 +746,8 @@ export default function InventarioCargaPage() {
 
       setPreviewRows([]);
 
+      requestIdRef.current = null;
+
       setImportRows([]);
 
       setFileName("");
@@ -720,8 +755,10 @@ export default function InventarioCargaPage() {
       setSearch("");
 
       setMessage(
-        result.message ||
-          `Inventario actualizado correctamente. ${items.length} producto(s) procesado(s).`
+        isDuplicateRequest
+          ? "Esta carga ya se había aplicado correctamente."
+          : result.message ||
+              `Inventario actualizado correctamente. ${items.length} producto(s) procesado(s).`
       );
 
       await loadProducts();
@@ -739,6 +776,32 @@ export default function InventarioCargaPage() {
     } finally {
       setApplying(false);
     }
+  }
+
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <p className="text-4xl">🔒</p>
+
+          <h1 className="mt-4 text-xl font-bold text-gray-900">
+            No tienes acceso a esta función
+          </h1>
+
+          <p className="mt-2 text-sm text-gray-600">
+            El ajuste masivo de inventario es solo para owner,
+            admin o manager.
+          </p>
+
+          <Link
+            href="/inventario"
+            className="mt-6 inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            Volver al inventario
+          </Link>
+        </div>
+      </main>
+    );
   }
 
   return (

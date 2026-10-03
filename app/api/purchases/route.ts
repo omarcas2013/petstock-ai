@@ -5,8 +5,89 @@ import {
   requireRole,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import { rangedQuery } from "@/lib/supabase/paginate";
 
-export async function GET() {
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+const VALID_STATUSES = ["pendiente", "recibida", "cancelada"];
+
+const PURCHASES_SELECT = `
+  id,
+  document_number,
+  purchase_date,
+  status,
+  subtotal,
+  total,
+  notes,
+  created_at,
+
+  suppliers (
+    id,
+    name
+  ),
+
+  purchase_items (
+    id,
+    quantity,
+    unit_cost,
+    subtotal,
+
+    products (
+      id,
+      name,
+      sku
+    )
+  ),
+
+  receipts (
+    id,
+    receipt_number,
+    received_at,
+    status,
+    scope,
+    branch_id,
+    warehouse_id,
+    location_id,
+
+    branches (
+      id,
+      name,
+      code
+    ),
+
+    warehouses (
+      id,
+      name,
+      code
+    ),
+
+    locations (
+      id,
+      name,
+      code
+    )
+  )
+`;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
+
+export async function GET(request: NextRequest) {
   try {
     /*
      * La matriz de roles no le da "compras y recepciones" a employee.
@@ -22,67 +103,42 @@ export async function GET() {
 
     const { supabase, profile } = auth;
 
-    const { data, error } = await supabase
+    const { searchParams } = new URL(request.url);
+
+    const { limit, offset } = parsePageParams(searchParams);
+
+    const statusFilter = searchParams.get("status") ?? "";
+
+    if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
+      return NextResponse.json(
+        { error: "El estado solicitado no es válido." },
+        { status: 400 }
+      );
+    }
+
+    let dataQuery = supabase
       .from("purchases")
-      .select(`
-        id,
-        document_number,
-        purchase_date,
-        status,
-        subtotal,
-        total,
-        notes,
-        created_at,
+      .select(PURCHASES_SELECT, { count: "exact" })
+      .eq("store_id", profile.store_id);
 
-        suppliers (
-          id,
-          name
-        ),
+    let countQuery = supabase
+      .from("purchases")
+      .select("id", { count: "exact", head: true })
+      .eq("store_id", profile.store_id);
 
-        purchase_items (
-          id,
-          quantity,
-          unit_cost,
-          subtotal,
+    if (statusFilter) {
+      dataQuery = dataQuery.eq("status", statusFilter);
+      countQuery = countQuery.eq("status", statusFilter);
+    }
 
-          products (
-            id,
-            name,
-            sku
-          )
-        ),
+    dataQuery = dataQuery
+      .order("purchase_date", { ascending: false })
+      .order("id");
 
-        receipts (
-          id,
-          receipt_number,
-          received_at,
-          status,
-          scope,
-          branch_id,
-          warehouse_id,
-          location_id,
-
-          branches (
-            id,
-            name,
-            code
-          ),
-
-          warehouses (
-            id,
-            name,
-            code
-          ),
-
-          locations (
-            id,
-            name,
-            code
-          )
-        )
-      `)
-      .eq("store_id", profile.store_id)
-      .order("purchase_date", { ascending: false });
+    const { data, error, count } = await rangedQuery(
+      () => dataQuery.range(offset, offset + limit - 1),
+      () => countQuery
+    );
 
     if (error) {
       console.error("Error GET /api/purchases:", error);
@@ -95,6 +151,9 @@ export async function GET() {
 
     return NextResponse.json({
       purchases: data ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error("Error GET /api/purchases:", error);

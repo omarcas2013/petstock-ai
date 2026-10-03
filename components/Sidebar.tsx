@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   usePathname,
@@ -8,7 +8,25 @@ import {
 } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-const navigation = [
+// Mismos roles de la matriz de tanda 3. Se duplica aquí (en vez de
+// importar lib/auth/require-role.ts) porque ese módulo usa el
+// cliente de Supabase del servidor (cookies), que no se puede
+// importar desde un componente "use client".
+const INVENTORY_MANAGER_ROLES = [
+  "owner",
+  "admin",
+  "manager",
+] as const;
+
+type NavItem = {
+  name: string;
+  href: string;
+  icon: string;
+  // Si no se indica, el enlace es visible para cualquier rol.
+  roles?: readonly string[];
+};
+
+const mainNavigation: NavItem[] = [
   {
     name: "Dashboard",
     href: "/",
@@ -20,13 +38,18 @@ const navigation = [
     icon: "🛒",
   },
   {
+    name: "Historial de ventas",
+    href: "/ventas/historial",
+    icon: "🧾",
+  },
+  {
     name: "Inventario",
     href: "/inventario",
     icon: "📦",
   },
   {
     name: "Escanear código",
-    href: "/inventory/scanner",
+    href: "/inventario/escaner",
     icon: "📷",
   },
   {
@@ -34,16 +57,62 @@ const navigation = [
     href: "/proveedores",
     icon: "🏢",
   },
+];
+
+// tanda 3, Parte C.1: Entradas, Movimientos y Reportes, visibles
+// según el rol (employee solo ve Devoluciones dentro de Entradas).
+const entradasNavigation: NavItem[] = [
   {
-    name: "Historial de ventas",
-    href: "/ventas/historial",
-    icon: "🧾",
+    name: "Compras",
+    href: "/inventario/entradas/compras",
+    icon: "🛍️",
+    roles: INVENTORY_MANAGER_ROLES,
+  },
+  {
+    name: "Recepciones",
+    href: "/inventario/entradas/recepciones",
+    icon: "📦",
+    roles: INVENTORY_MANAGER_ROLES,
+  },
+  {
+    name: "Devoluciones",
+    href: "/inventario/entradas/devoluciones",
+    icon: "↩️",
   },
 ];
+
+const otherNavigation: NavItem[] = [
+  {
+    name: "Movimientos",
+    href: "/inventario/movimientos",
+    icon: "🔄",
+    roles: INVENTORY_MANAGER_ROLES,
+  },
+  {
+    name: "Reportes",
+    href: "/reportes",
+    icon: "📊",
+    roles: INVENTORY_MANAGER_ROLES,
+  },
+];
+
+function isVisible(item: NavItem, role: string | null) {
+  if (!item.roles) {
+    return true;
+  }
+
+  if (!role) {
+    return false;
+  }
+
+  return (item.roles as readonly string[]).includes(role);
+}
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+
+  const [role, setRole] = useState<string | null>(null);
 
   /*
    * En celular arranca ABIERTO a propósito: al cargar la aplicación,
@@ -59,6 +128,32 @@ export default function Sidebar() {
     useState(false);
 
   const supabase = createClient();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRole() {
+      try {
+        const { data } = await supabase.rpc("get_my_role");
+
+        if (!cancelled) {
+          setRole(typeof data === "string" ? data : null);
+        }
+      } catch (error) {
+        console.error("Error obteniendo el rol:", error);
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadRole();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleLogout() {
     try {
@@ -78,36 +173,70 @@ export default function Sidebar() {
     }
   }
 
-  function isActive(href: string) {
+  /*
+   * tanda 3, Parte C.1: "resaltar solo la opción más específica".
+   * En vez de reglas especiales por cada ruta, se calcula qué enlace
+   * (de todos los visibles) coincide con la URL actual y, entre los
+   * que coinciden, se resalta únicamente el de href más largo
+   * (el más específico). Por ejemplo, en /ventas/historial, tanto
+   * "/ventas" como "/ventas/historial" coinciden, pero gana este
+   * último por ser más largo.
+   */
+  const visibleHrefs = [
+    ...mainNavigation,
+    ...entradasNavigation,
+    ...otherNavigation,
+  ]
+    .filter((item) => isVisible(item, role))
+    .map((item) => item.href);
+
+  function matches(href: string) {
     if (href === "/") {
       return pathname === "/";
     }
 
-    if (href === "/ventas") {
-      return (
-        pathname === "/ventas" ||
-        (pathname.startsWith("/ventas/") &&
-          !pathname.startsWith("/ventas/historial"))
-      );
+    return (
+      pathname === href || pathname.startsWith(`${href}/`)
+    );
+  }
+
+  function isActive(href: string) {
+    const matchingHrefs = visibleHrefs.filter(matches);
+
+    if (matchingHrefs.length === 0) {
+      return false;
     }
 
-    if (href === "/inventario") {
-      return (
-        pathname === "/inventario" ||
-        pathname.startsWith("/inventario/")
-      );
-    }
+    const mostSpecific = matchingHrefs.reduce((a, b) =>
+      b.length > a.length ? b : a
+    );
 
-    if (href === "/inventory/scanner") {
-      return (
-        pathname === "/inventory/scanner" ||
-        pathname.startsWith(
-          "/inventory/scanner/"
-        )
-      );
-    }
+    return href === mostSpecific;
+  }
 
-    return pathname === href;
+  function renderNavItem(item: NavItem) {
+    const active = isActive(item.href);
+
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        onClick={() => setMobileOpen(false)}
+        className={`
+          flex items-center gap-3 rounded-xl px-4 py-3
+          text-sm font-medium transition
+          ${
+            active
+              ? "bg-gray-900 text-white"
+              : "text-gray-700 hover:bg-gray-100"
+          }
+        `}
+      >
+        <span className="text-lg">{item.icon}</span>
+
+        <span>{item.name}</span>
+      </Link>
+    );
   }
 
   return (
@@ -195,49 +324,34 @@ export default function Sidebar() {
           </p>
 
           <div className="space-y-1">
-
-            {navigation.map(
-              (item) => {
-
-                const active =
-                  isActive(
-                    item.href
-                  );
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() =>
-                      setMobileOpen(
-                        false
-                      )
-                    }
-                    className={`
-                      flex items-center gap-3 rounded-xl px-4 py-3
-                      text-sm font-medium transition
-                      ${
-                        active
-                          ? "bg-gray-900 text-white"
-                          : "text-gray-700 hover:bg-gray-100"
-                      }
-                    `}
-                  >
-
-                    <span className="text-lg">
-                      {item.icon}
-                    </span>
-
-                    <span>
-                      {item.name}
-                    </span>
-
-                  </Link>
-                );
-              }
-            )}
-
+            {mainNavigation.map((item) => renderNavItem(item))}
           </div>
+
+          {entradasNavigation.some((item) =>
+            isVisible(item, role)
+          ) && (
+            <div className="mt-6">
+              <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                Entradas
+              </p>
+
+              <div className="space-y-1">
+                {entradasNavigation
+                  .filter((item) => isVisible(item, role))
+                  .map((item) => renderNavItem(item))}
+              </div>
+            </div>
+          )}
+
+          {otherNavigation.some((item) =>
+            isVisible(item, role)
+          ) && (
+            <div className="mt-6 space-y-1">
+              {otherNavigation
+                .filter((item) => isVisible(item, role))
+                .map((item) => renderNavItem(item))}
+            </div>
+          )}
 
           {/* PRÓXIMAMENTE */}
 

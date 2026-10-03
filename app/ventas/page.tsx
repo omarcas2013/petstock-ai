@@ -130,8 +130,11 @@ export default function VentasPage() {
       setLoadingSales(true);
       setSalesError("");
 
+      // Vista previa de ventas recientes: límite explícito, no el
+      // valor por defecto de la API. El historial completo con
+      // paginación y filtros vive en /ventas/historial.
       const response = await fetch(
-        "/api/sales"
+        "/api/sales?limit=10"
       );
 
       const result =
@@ -176,7 +179,7 @@ export default function VentasPage() {
             cache: "no-store",
           }),
 
-          fetch("/api/sales", {
+          fetch("/api/sales?limit=10", {
             method: "GET",
             cache: "no-store",
           }),
@@ -920,24 +923,36 @@ export default function VentasPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
-                  Historial de ventas
+                  Ventas recientes
                 </h2>
 
                 <p className="text-sm text-gray-500">
-                  Consulta las ventas registradas.
+                  Las 10 ventas más recientes.
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={loadSales}
-                disabled={loadingSales}
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {loadingSales
-                  ? "Cargando..."
-                  : "Actualizar"}
-              </button>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/ventas/historial")
+                  }
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Ver historial completo
+                </button>
+
+                <button
+                  type="button"
+                  onClick={loadSales}
+                  disabled={loadingSales}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {loadingSales
+                    ? "Cargando..."
+                    : "Actualizar"}
+                </button>
+              </div>
             </div>
           </div>
 

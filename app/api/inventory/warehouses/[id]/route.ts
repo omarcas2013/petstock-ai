@@ -5,6 +5,8 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { escapeLikePattern } from "@/lib/supabase/like";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 type WarehousePayload = {
   name?: unknown;
@@ -401,7 +403,7 @@ export async function PUT(
       .from("warehouses")
       .select("id")
       .eq("store_id", storeId)
-      .ilike("name", name)
+      .ilike("name", escapeLikePattern(name))
       .neq("id", id);
 
     duplicateNameQuery = branchId
@@ -479,6 +481,20 @@ export async function PUT(
           {
             error:
               "Ya existe un almacén con ese código o nombre.",
+          },
+          { status: 409 }
+        );
+      }
+
+      // P0001 = el trigger A7 bloqueó la desactivación porque el
+      // almacén tiene existencias (quantity > 0) asociadas.
+      if (updateError.code === "P0001") {
+        return NextResponse.json(
+          {
+            error: rpcErrorMessage(
+              updateError,
+              "No se pudo actualizar el almacén."
+            ),
           },
           { status: 409 }
         );
@@ -580,6 +596,20 @@ export async function DELETE(
           {
             error:
               "No se puede eliminar: el almacén tiene ubicaciones o existencias asociadas.",
+          },
+          { status: 409 }
+        );
+      }
+
+      // P0001 = el trigger A7 bloqueó el borrado porque el almacén
+      // tiene existencias (quantity > 0) asociadas.
+      if (deleteError.code === "P0001") {
+        return NextResponse.json(
+          {
+            error: rpcErrorMessage(
+              deleteError,
+              "No se pudo eliminar el almacén."
+            ),
           },
           { status: 409 }
         );

@@ -37,6 +37,46 @@ type StockRow = {
   quantity: number;
 };
 
+type NamedRef = {
+  id: string;
+  name: string;
+  code: string;
+} | null;
+
+type Transfer = {
+  id: string;
+  quantity: number;
+  reason: string | null;
+  created_at: string;
+  products: {
+    name: string;
+    sku: string | null;
+  } | null;
+  from_warehouses: NamedRef;
+  from_locations: NamedRef;
+  to_warehouses: NamedRef;
+  to_locations: NamedRef;
+};
+
+const TRANSFERS_PAGE_SIZE = 20;
+
+/*
+ * No todos los traslados tienen almacén y ubicación resueltos (por
+ * ejemplo, si el almacén o la ubicación fueron borrados). Antes se
+ * mostraba siempre "almacén / ubicación", y con cualquiera de los dos
+ * vacío quedaba "Almacén / " o " / Ubicación" colgando.
+ */
+function formatTransferScope(
+  warehouse: NamedRef,
+  location: NamedRef
+) {
+  if (warehouse?.name && location?.name) {
+    return `${warehouse.name} / ${location.name}`;
+  }
+
+  return warehouse?.name || location?.name || "—";
+}
+
 export default function TrasladosPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -62,6 +102,64 @@ export default function TrasladosPage() {
     useState("");
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
+
+  /*
+   * =====================================================
+   * HISTORIAL DE TRASLADOS
+   * =====================================================
+   */
+
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [transfersTotal, setTransfersTotal] = useState(0);
+  const [transfersOffset, setTransfersOffset] = useState(0);
+  const [loadingTransfers, setLoadingTransfers] = useState(true);
+  const [transfersError, setTransfersError] = useState("");
+
+  async function loadTransfers(nextOffset: number) {
+    try {
+      setLoadingTransfers(true);
+      setTransfersError("");
+
+      const response = await fetch(
+        `/api/inventory/transfers?limit=${TRANSFERS_PAGE_SIZE}&offset=${nextOffset}`
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "No se pudo cargar el historial de traslados."
+        );
+      }
+
+      setTransfers(result.transfers || []);
+      setTransfersTotal(
+        typeof result.total === "number" ? result.total : 0
+      );
+      setTransfersOffset(nextOffset);
+    } catch (error) {
+      console.error(error);
+
+      setTransfersError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar el historial de traslados."
+      );
+    } finally {
+      setLoadingTransfers(false);
+    }
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadTransfers(0);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   /*
    * =====================================================
@@ -529,6 +627,7 @@ export default function TrasladosPage() {
       );
 
       await loadData();
+      await loadTransfers(0);
 
       setQuantity("");
       setReason("");
@@ -1214,6 +1313,193 @@ export default function TrasladosPage() {
             </button>
           </div>
         )}
+
+        {/* HISTORIAL DE TRASLADOS */}
+
+        <section className="mt-6 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900">
+              Historial de traslados
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Consulta los traslados realizados entre
+              almacenes y ubicaciones.
+            </p>
+          </div>
+
+          {transfersError && (
+            <div className="border-b border-red-200 bg-red-50 p-5 text-red-700">
+              <p className="font-semibold">Error</p>
+
+              <p className="mt-1 text-sm">
+                {transfersError}
+              </p>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadTransfers(transfersOffset)
+                }
+                className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
+          {loadingTransfers ? (
+            <div className="p-12 text-center text-sm text-gray-500">
+              Cargando historial...
+            </div>
+          ) : transfers.length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="text-4xl">↔</div>
+
+              <p className="mt-3 font-medium text-gray-700">
+                No hay traslados registrados.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px]">
+                  <thead className="border-b bg-gray-50">
+                    <tr className="text-left text-sm text-gray-500">
+                      <th className="px-5 py-4 font-medium">
+                        Fecha
+                      </th>
+
+                      <th className="px-5 py-4 font-medium">
+                        Producto
+                      </th>
+
+                      <th className="px-5 py-4 font-medium">
+                        Origen
+                      </th>
+
+                      <th className="px-5 py-4 font-medium">
+                        Destino
+                      </th>
+
+                      <th className="px-5 py-4 text-right font-medium">
+                        Cantidad
+                      </th>
+
+                      <th className="px-5 py-4 font-medium">
+                        Motivo
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y">
+                    {transfers.map((transfer) => (
+                      <tr
+                        key={transfer.id}
+                        className="hover:bg-gray-50"
+                      >
+                        <td className="px-5 py-4 text-sm text-gray-600">
+                          {new Date(
+                            transfer.created_at
+                          ).toLocaleString("es-CO", {
+                            timeZone: "America/Bogota",
+                          })}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-gray-900">
+                            {transfer.products?.name ||
+                              "Producto desconocido"}
+                          </p>
+
+                          <p className="text-xs text-gray-500">
+                            {transfer.products?.sku || "—"}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-4 text-sm text-gray-700">
+                          {formatTransferScope(
+                            transfer.from_warehouses,
+                            transfer.from_locations
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4 text-sm text-gray-700">
+                          {formatTransferScope(
+                            transfer.to_warehouses,
+                            transfer.to_locations
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4 text-right font-semibold text-gray-900">
+                          {transfer.quantity}
+                        </td>
+
+                        <td className="px-5 py-4 text-sm text-gray-700">
+                          {transfer.reason || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between border-t px-5 py-4">
+                <p className="text-sm text-gray-500">
+                  Página{" "}
+                  {Math.floor(
+                    transfersOffset / TRANSFERS_PAGE_SIZE
+                  ) + 1}{" "}
+                  de{" "}
+                  {Math.max(
+                    1,
+                    Math.ceil(
+                      transfersTotal / TRANSFERS_PAGE_SIZE
+                    )
+                  )}{" "}
+                  · {transfersTotal} traslados en total
+                </p>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={transfersOffset === 0}
+                    onClick={() =>
+                      loadTransfers(
+                        Math.max(
+                          0,
+                          transfersOffset -
+                            TRANSFERS_PAGE_SIZE
+                        )
+                      )
+                    }
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Anterior
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={
+                      transfersOffset +
+                        TRANSFERS_PAGE_SIZE >=
+                      transfersTotal
+                    }
+                    onClick={() =>
+                      loadTransfers(
+                        transfersOffset +
+                          TRANSFERS_PAGE_SIZE
+                      )
+                    }
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Siguiente
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
 
         {/* INFORMACIÓN */}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 type InventoryMode =
@@ -88,9 +88,30 @@ type Purchase = {
   receipts: Receipt[] | null;
 };
 
+const RECEPTIONS_PAGE_SIZE = 10;
+
 export default function RecepcionesPage() {
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cada sección pagina por separado contra GET /api/purchases con
+  // su propio status=: antes se traía una sola página (20 filas, sin
+  // filtrar por estado) y se separaba en memoria, así que con más de
+  // 20 compras podían faltar pendientes o recepciones enteras.
+  const [pendingPurchases, setPendingPurchases] = useState<
+    Purchase[]
+  >([]);
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [pendingOffset, setPendingOffset] = useState(0);
+  const [loadingPending, setLoadingPending] = useState(true);
+
+  const [receivedPurchases, setReceivedPurchases] = useState<
+    Purchase[]
+  >([]);
+  const [receivedTotal, setReceivedTotal] = useState(0);
+  const [receivedOffset, setReceivedOffset] = useState(0);
+  const [loadingReceived, setLoadingReceived] = useState(true);
+
+  // 403 de GET /api/purchases: la página no se usa ni se muestra
+  // vacía, se reemplaza por un aviso de acceso.
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -123,35 +144,115 @@ export default function RecepcionesPage() {
   const [selectedLocationId, setSelectedLocationId] =
     useState("");
 
-  async function loadData() {
+  async function loadPendingPurchases(
+    nextOffset: number
+  ) {
     try {
-      setLoading(true);
+      setLoadingPending(true);
 
-      const [
-        purchasesResponse,
-        branchesResponse,
-        warehousesResponse,
-      ] = await Promise.all([
-        fetch("/api/purchases"),
-        fetch("/api/inventory/branches"),
-        fetch("/api/inventory/warehouses"),
-      ]);
+      const response = await fetch(
+        `/api/purchases?status=pendiente&limit=${RECEPTIONS_PAGE_SIZE}&offset=${nextOffset}`
+      );
 
-      if (!purchasesResponse.ok) {
-        const data = await purchasesResponse
-          .json()
-          .catch(() => null);
+      if (response.status === 403) {
+        setAccessDenied(true);
+        return;
+      }
 
+      const data = await response.json();
+
+      if (!response.ok) {
         throw new Error(
           data?.error ||
-            "No se pudieron cargar las compras."
+            "No se pudieron cargar las compras pendientes."
         );
       }
 
-      const purchasesData =
-        await purchasesResponse.json();
+      setPendingPurchases(data.purchases ?? []);
+      setPendingTotal(
+        typeof data.total === "number" ? data.total : 0
+      );
+      setPendingOffset(nextOffset);
+    } catch (error) {
+      console.error(
+        "Error cargando compras pendientes:",
+        error
+      );
 
-      setPurchases(purchasesData.purchases ?? []);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron cargar las compras pendientes."
+      );
+    } finally {
+      setLoadingPending(false);
+    }
+  }
+
+  async function loadReceivedPurchases(
+    nextOffset: number
+  ) {
+    try {
+      setLoadingReceived(true);
+
+      const response = await fetch(
+        `/api/purchases?status=recibida&limit=${RECEPTIONS_PAGE_SIZE}&offset=${nextOffset}`
+      );
+
+      if (response.status === 403) {
+        setAccessDenied(true);
+        return;
+      }
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            "No se pudo cargar el historial de recepciones."
+        );
+      }
+
+      setReceivedPurchases(data.purchases ?? []);
+      setReceivedTotal(
+        typeof data.total === "number" ? data.total : 0
+      );
+      setReceivedOffset(nextOffset);
+    } catch (error) {
+      console.error(
+        "Error cargando historial de recepciones:",
+        error
+      );
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar el historial de recepciones."
+      );
+    } finally {
+      setLoadingReceived(false);
+    }
+  }
+
+  async function loadData() {
+    try {
+      const branchesPromise = fetch(
+        "/api/inventory/branches"
+      );
+      const warehousesPromise = fetch(
+        "/api/inventory/warehouses"
+      );
+
+      await Promise.all([
+        loadPendingPurchases(0),
+        loadReceivedPurchases(0),
+      ]);
+
+      const [branchesResponse, warehousesResponse] =
+        await Promise.all([
+          branchesPromise,
+          warehousesPromise,
+        ]);
 
       if (branchesResponse.ok) {
         const branchesData =
@@ -181,32 +282,13 @@ export default function RecepcionesPage() {
           ? error.message
           : "Error cargando las recepciones."
       );
-    } finally {
-      setLoading(false);
     }
   }
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const pendingPurchases = useMemo(
-    () =>
-      purchases.filter(
-        (purchase) =>
-          purchase.status === "pendiente"
-      ),
-    [purchases]
-  );
-
-  const receivedPurchases = useMemo(
-    () =>
-      purchases.filter(
-        (purchase) =>
-          purchase.status === "recibida"
-      ),
-    [purchases]
-  );
 
   async function loadInventoryMode(
     purchaseId: string
@@ -649,6 +731,31 @@ export default function RecepcionesPage() {
       selectedWarehouseId
   );
 
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <p className="text-4xl">🔒</p>
+
+          <h1 className="mt-4 text-xl font-bold text-slate-900">
+            No tienes acceso a Compras
+          </h1>
+
+          <p className="mt-2 text-sm text-slate-600">
+            Esta sección es solo para owner, admin o manager.
+          </p>
+
+          <Link
+            href="/inventario"
+            className="mt-6 inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Volver al inventario
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-7xl">
@@ -681,14 +788,14 @@ export default function RecepcionesPage() {
         </div>
 
         {/* RESUMEN */}
-        <div className="mb-6 grid gap-4 md:grid-cols-3">
+        <div className="mb-6 grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
             <p className="text-sm font-semibold text-amber-700">
               Pendientes de recibir
             </p>
 
             <p className="mt-1 text-3xl font-bold text-amber-900">
-              {pendingPurchases.length}
+              {pendingTotal}
             </p>
           </div>
 
@@ -698,21 +805,7 @@ export default function RecepcionesPage() {
             </p>
 
             <p className="mt-1 text-3xl font-bold text-emerald-900">
-              {receivedPurchases.length}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
-            <p className="text-sm font-semibold text-blue-700">
-              Productos pendientes
-            </p>
-
-            <p className="mt-1 text-3xl font-bold text-blue-900">
-              {pendingPurchases.reduce(
-                (sum, purchase) =>
-                  sum + totalProducts(purchase),
-                0
-              )}
+              {receivedTotal}
             </p>
           </div>
         </div>
@@ -745,7 +838,7 @@ export default function RecepcionesPage() {
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            {loading ? (
+            {loadingPending ? (
               <div className="p-8 text-center text-slate-500">
                 Cargando recepciones...
               </div>
@@ -869,6 +962,61 @@ export default function RecepcionesPage() {
                 </table>
               </div>
             )}
+
+            {!loadingPending && pendingPurchases.length > 0 && (
+              <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+                <p className="text-sm text-slate-500">
+                  Página{" "}
+                  {Math.floor(
+                    pendingOffset / RECEPTIONS_PAGE_SIZE
+                  ) + 1}{" "}
+                  de{" "}
+                  {Math.max(
+                    1,
+                    Math.ceil(
+                      pendingTotal / RECEPTIONS_PAGE_SIZE
+                    )
+                  )}
+                </p>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={pendingOffset === 0}
+                    onClick={() =>
+                      loadPendingPurchases(
+                        Math.max(
+                          0,
+                          pendingOffset -
+                            RECEPTIONS_PAGE_SIZE
+                        )
+                      )
+                    }
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Anterior
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={
+                      pendingOffset +
+                        RECEPTIONS_PAGE_SIZE >=
+                      pendingTotal
+                    }
+                    onClick={() =>
+                      loadPendingPurchases(
+                        pendingOffset +
+                          RECEPTIONS_PAGE_SIZE
+                      )
+                    }
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Siguiente
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -886,7 +1034,7 @@ export default function RecepcionesPage() {
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            {loading ? (
+            {loadingReceived ? (
               <div className="p-8 text-center text-slate-500">
                 Cargando historial...
               </div>
@@ -1053,6 +1201,64 @@ export default function RecepcionesPage() {
                 </table>
               </div>
             )}
+
+            {!loadingReceived &&
+              receivedPurchases.length > 0 && (
+                <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+                  <p className="text-sm text-slate-500">
+                    Página{" "}
+                    {Math.floor(
+                      receivedOffset /
+                        RECEPTIONS_PAGE_SIZE
+                    ) + 1}{" "}
+                    de{" "}
+                    {Math.max(
+                      1,
+                      Math.ceil(
+                        receivedTotal /
+                          RECEPTIONS_PAGE_SIZE
+                      )
+                    )}
+                  </p>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={receivedOffset === 0}
+                      onClick={() =>
+                        loadReceivedPurchases(
+                          Math.max(
+                            0,
+                            receivedOffset -
+                              RECEPTIONS_PAGE_SIZE
+                          )
+                        )
+                      }
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Anterior
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={
+                        receivedOffset +
+                          RECEPTIONS_PAGE_SIZE >=
+                        receivedTotal
+                      }
+                      onClick={() =>
+                        loadReceivedPurchases(
+                          receivedOffset +
+                            RECEPTIONS_PAGE_SIZE
+                        )
+                      }
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                </div>
+              )}
           </div>
         </section>
       </div>

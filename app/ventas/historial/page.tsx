@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 
 type Product = {
@@ -28,10 +33,14 @@ type Sale = {
   sale_items?: SaleItem[] | null;
 };
 
+const PAGE_SIZE = 20;
+
 export default function HistorialVentasPage() {
   const router = useRouter();
 
   const [sales, setSales] = useState<Sale[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -42,77 +51,46 @@ export default function HistorialVentasPage() {
   const [sortOrder, setSortOrder] =
     useState("recent");
 
-  async function loadSales() {
-    try {
-      setLoading(true);
-      setError("");
+  // Descarta una respuesta tardía si el usuario siguió escribiendo o
+  // cambió de página antes de que esta llegara.
+  const latestRequestRef = useRef(0);
 
-      const response = await fetch(
-        "/api/sales",
-        {
-          method: "GET",
-          cache: "no-store",
-        }
-      );
+  const loadSales = useCallback(
+    async (nextOffset: number) => {
+      const requestId = ++latestRequestRef.current;
 
-      const result = await response.json();
-
-      console.log(
-        "VENTAS RECIBIDAS:",
-        result
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-            "Error cargando las ventas."
-        );
-      }
-
-      const receivedSales =
-        Array.isArray(result.sales)
-          ? result.sales
-          : [];
-
-      setSales(receivedSales);
-    } catch (error) {
-      console.error(
-        "ERROR HISTORIAL:",
-        error
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Error cargando las ventas."
-      );
-
-      setSales([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchSales() {
       try {
+        setLoading(true);
+        setError("");
+
+        const params = new URLSearchParams();
+
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(nextOffset));
+
+        if (search.trim()) {
+          params.set("search", search.trim());
+        }
+
+        if (paymentFilter !== "todos") {
+          params.set("payment_method", paymentFilter);
+        }
+
+        params.set("sort", sortOrder);
+
         const response = await fetch(
-          "/api/sales",
+          `/api/sales?${params.toString()}`,
           {
             method: "GET",
             cache: "no-store",
           }
         );
 
-        const result =
-          await response.json();
+        const result = await response.json();
 
-        console.log(
-          "VENTAS RECIBIDAS:",
-          result
-        );
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
 
         if (!response.ok) {
           throw new Error(
@@ -121,26 +99,19 @@ export default function HistorialVentasPage() {
           );
         }
 
-        if (cancelled) {
-          return;
-        }
-
-        const receivedSales =
-          Array.isArray(result.sales)
-            ? result.sales
-            : [];
-
-        setSales(receivedSales);
-        setError("");
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        console.error(
-          "ERROR HISTORIAL:",
-          error
+        setSales(
+          Array.isArray(result.sales) ? result.sales : []
         );
+        setTotal(
+          typeof result.total === "number" ? result.total : 0
+        );
+        setOffset(nextOffset);
+      } catch (error) {
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
+        console.error("ERROR HISTORIAL:", error);
 
         setError(
           error instanceof Error
@@ -149,19 +120,24 @@ export default function HistorialVentasPage() {
         );
 
         setSales([]);
+        setTotal(0);
       } finally {
-        if (!cancelled) {
+        if (latestRequestRef.current === requestId) {
           setLoading(false);
         }
       }
-    }
+    },
+    [search, paymentFilter, sortOrder]
+  );
 
-    fetchSales();
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      loadSales(0);
+    }, 300);
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, paymentFilter, sortOrder]);
 
   function formatPrice(
     price: number
@@ -209,122 +185,27 @@ export default function HistorialVentasPage() {
     }
   }
 
-  const filteredSales = useMemo(() => {
-    const text = search
-      .trim()
-      .toLowerCase();
+  const pageTotal = sales.reduce(
+    (sum, sale) => sum + Number(sale.total || 0),
+    0
+  );
 
-    const result = sales.filter(
-      (sale) => {
-        const customer =
-          sale.customer_name
-            ?.toLowerCase() || "";
+  const pageUnits = sales.reduce((sum, sale) => {
+    const items = Array.isArray(sale.sale_items)
+      ? sale.sale_items
+      : [];
 
-        const saleId =
-          sale.id.toLowerCase();
-
-        const matchesSearch =
-          text === "" ||
-          customer.includes(text) ||
-          saleId.includes(text);
-
-        const matchesPayment =
-          paymentFilter ===
-            "todos" ||
-          sale.payment_method ===
-            paymentFilter;
-
-        return (
-          matchesSearch &&
-          matchesPayment
-        );
-      }
+    return (
+      sum +
+      items.reduce(
+        (itemSum, item) => itemSum + Number(item.quantity || 0),
+        0
+      )
     );
+  }, 0);
 
-    result.sort((a, b) => {
-      if (
-        sortOrder === "oldest"
-      ) {
-        return (
-          new Date(
-            a.created_at
-          ).getTime() -
-          new Date(
-            b.created_at
-          ).getTime()
-        );
-      }
-
-      if (
-        sortOrder === "highest"
-      ) {
-        return (
-          Number(b.total) -
-          Number(a.total)
-        );
-      }
-
-      if (
-        sortOrder === "lowest"
-      ) {
-        return (
-          Number(a.total) -
-          Number(b.total)
-        );
-      }
-
-      return (
-        new Date(
-          b.created_at
-        ).getTime() -
-        new Date(
-          a.created_at
-        ).getTime()
-      );
-    });
-
-    return result;
-  }, [
-    sales,
-    search,
-    paymentFilter,
-    sortOrder,
-  ]);
-
-  const filteredTotal =
-    filteredSales.reduce(
-      (sum, sale) =>
-        sum + Number(sale.total || 0),
-      0
-    );
-
-  const filteredUnits =
-    filteredSales.reduce(
-      (sum, sale) => {
-        const items =
-          Array.isArray(
-            sale.sale_items
-          )
-            ? sale.sale_items
-            : [];
-
-        return (
-          sum +
-          items.reduce(
-            (
-              itemSum,
-              item
-            ) =>
-              itemSum +
-              Number(
-                item.quantity || 0
-              ),
-            0
-          )
-        );
-      },
-      0
-    );
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <main className="min-h-screen bg-gray-100 p-6 md:p-10">
@@ -384,7 +265,7 @@ export default function HistorialVentasPage() {
 
             <button
               type="button"
-              onClick={loadSales}
+              onClick={() => loadSales(offset)}
               className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
             >
               Reintentar
@@ -489,33 +370,33 @@ export default function HistorialVentasPage() {
         <div className="mb-6 grid gap-4 sm:grid-cols-3">
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
-              Ventas mostradas
+              Ventas encontradas
             </p>
 
             <p className="mt-1 text-2xl font-bold text-gray-900">
-              {filteredSales.length}
+              {total}
             </p>
           </div>
 
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
-              Total vendido
+              Total vendido (página actual)
             </p>
 
             <p className="mt-1 text-2xl font-bold text-gray-900">
               {formatPrice(
-                filteredTotal
+                pageTotal
               )}
             </p>
           </div>
 
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
-              Unidades
+              Unidades (página actual)
             </p>
 
             <p className="mt-1 text-2xl font-bold text-gray-900">
-              {filteredUnits}
+              {pageUnits}
             </p>
           </div>
         </div>
@@ -528,7 +409,7 @@ export default function HistorialVentasPage() {
               Cargando ventas...
             </p>
           </div>
-        ) : filteredSales.length ===
+        ) : sales.length ===
           0 ? (
           <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
             <div className="text-4xl">
@@ -542,14 +423,6 @@ export default function HistorialVentasPage() {
             <p className="mt-1 text-sm text-gray-500">
               Prueba cambiando los filtros.
             </p>
-
-            {sales.length > 0 && (
-              <p className="mt-4 text-xs text-gray-400">
-                La API devolvió{" "}
-                {sales.length}{" "}
-                ventas, pero ninguna coincide con los filtros actuales.
-              </p>
-            )}
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
@@ -584,7 +457,7 @@ export default function HistorialVentasPage() {
                 </thead>
 
                 <tbody className="divide-y">
-                  {filteredSales.map(
+                  {sales.map(
                     (sale) => {
                       const items =
                         Array.isArray(
@@ -678,6 +551,37 @@ export default function HistorialVentasPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* PAGINACIÓN */}
+
+            <div className="flex items-center justify-between border-t px-5 py-4">
+              <p className="text-sm text-gray-500">
+                Página {currentPage} de {totalPages} ·{" "}
+                {total} ventas en total
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={offset === 0}
+                  onClick={() =>
+                    loadSales(Math.max(0, offset - PAGE_SIZE))
+                  }
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Anterior
+                </button>
+
+                <button
+                  type="button"
+                  disabled={offset + PAGE_SIZE >= total}
+                  onClick={() => loadSales(offset + PAGE_SIZE)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Siguiente
+                </button>
+              </div>
             </div>
           </div>
         )}

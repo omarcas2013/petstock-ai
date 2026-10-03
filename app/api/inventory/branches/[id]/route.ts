@@ -4,6 +4,8 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { escapeLikePattern } from "@/lib/supabase/like";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 function normalizeText(value: unknown) {
   if (typeof value !== "string") {
@@ -88,6 +90,11 @@ export async function GET(
  * =====================================================
  * PUT /api/inventory/branches/[id]
  * =====================================================
+ *
+ * Un solo camino de actualización (antes había un atajo para
+ * is_active que ignoraba cualquier otro campo enviado en la misma
+ * petición y nunca llegaba a validar nombre duplicado). Si un campo
+ * no viene en el body (undefined), se conserva el valor actual.
  */
 
 export async function PUT(
@@ -158,76 +165,14 @@ export async function PUT(
     }
 
     /*
-     * =================================================
-     * ESTADO
-     * =================================================
-     *
-     * Permite:
-     * {
-     *   is_active: true
-     * }
-     *
-     * o:
-     *
-     * {
-     *   is_active: false
-     * }
+     * Si un campo no viene (undefined), se conserva el valor
+     * actual en vez de limpiarlo.
      */
 
-    if (typeof body.is_active === "boolean") {
-      const { data, error } = await supabase
-        .from("branches")
-        .update({
-          is_active: body.is_active,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", id)
-        .eq("store_id", storeId)
-        .select(
-          `
-            id,
-            store_id,
-            name,
-            code,
-            description,
-            address,
-            phone,
-            email,
-            is_active,
-            created_at,
-            updated_at
-          `
-        )
-        .single();
-
-      if (error) {
-        console.error(
-          "Error actualizando estado de sucursal:",
-          error
-        );
-
-        return NextResponse.json(
-          {
-            error:
-              "No se pudo actualizar el estado de la sucursal.",
-          },
-          { status: 400 }
-        );
-      }
-
-      return NextResponse.json({
-        ok: true,
-        branch: data,
-      });
-    }
-
-    /*
-     * =================================================
-     * ACTUALIZACIÓN DE INFORMACIÓN
-     * =================================================
-     */
-
-    const name = normalizeText(body.name);
+    const name =
+      body.name !== undefined
+        ? normalizeText(body.name)
+        : existingBranch.name;
 
     if (!name) {
       return NextResponse.json(
@@ -239,12 +184,34 @@ export async function PUT(
     /*
      * El código no se modifica
      * desde el frontend de edición.
-     *
-     * Pero lo conservamos desde
-     * el registro existente.
      */
 
     const code = existingBranch.code;
+
+    const description =
+      body.description !== undefined
+        ? normalizeText(body.description)
+        : existingBranch.description;
+
+    const address =
+      body.address !== undefined
+        ? normalizeText(body.address)
+        : existingBranch.address;
+
+    const phone =
+      body.phone !== undefined
+        ? normalizeText(body.phone)
+        : existingBranch.phone;
+
+    const email =
+      body.email !== undefined
+        ? normalizeText(body.email)
+        : existingBranch.email;
+
+    const isActive =
+      typeof body.is_active === "boolean"
+        ? body.is_active
+        : existingBranch.is_active;
 
     /*
      * Verificar nombre duplicado.
@@ -259,7 +226,7 @@ export async function PUT(
         .from("branches")
         .select("id")
         .eq("store_id", storeId)
-        .ilike("name", name)
+        .ilike("name", escapeLikePattern(name))
         .neq("id", id)
         .maybeSingle();
 
@@ -285,10 +252,11 @@ export async function PUT(
     const updateData = {
       name,
       code,
-      description: normalizeText(body.description),
-      address: normalizeText(body.address),
-      phone: normalizeText(body.phone),
-      email: normalizeText(body.email),
+      description,
+      address,
+      phone,
+      email,
+      is_active: isActive,
       updated_at: new Date().toISOString(),
     };
 
@@ -316,6 +284,20 @@ export async function PUT(
 
     if (error) {
       console.error("Error actualizando sucursal:", error);
+
+      // P0001 = el trigger A7 bloqueó la desactivación porque la
+      // sucursal tiene existencias (quantity > 0) asociadas.
+      if (error.code === "P0001") {
+        return NextResponse.json(
+          {
+            error: rpcErrorMessage(
+              error,
+              "No se pudo actualizar la sucursal."
+            ),
+          },
+          { status: 409 }
+        );
+      }
 
       return NextResponse.json(
         { error: "No se pudo actualizar la sucursal." },

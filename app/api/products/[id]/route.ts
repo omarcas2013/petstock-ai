@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import {
+  buildProductSelect,
+  flattenProductCost,
+  type ProductRow,
+} from "@/lib/products/select";
+import {
   CATALOG_WRITE_ROLES,
-  hideCostFields,
+  COST_VIEW_ROLES,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
@@ -16,16 +21,13 @@ function normalizeText(value: unknown) {
   return trimmed || null;
 }
 
-function parseNonNegativeNumber(
-  value: unknown,
-  fallback = 0
-) {
+function parseNonNegativeNumber(value: unknown) {
   if (
     value === "" ||
     value === null ||
     value === undefined
   ) {
-    return fallback;
+    return null;
   }
 
   const number = Number(value);
@@ -37,16 +39,13 @@ function parseNonNegativeNumber(
   return number;
 }
 
-function parseNonNegativeInteger(
-  value: unknown,
-  fallback = 0
-) {
+function parseNonNegativeInteger(value: unknown) {
   if (
     value === "" ||
     value === null ||
     value === undefined
   ) {
-    return fallback;
+    return null;
   }
 
   const number = Number(value);
@@ -56,6 +55,19 @@ function parseNonNegativeInteger(
   }
 
   return number;
+}
+
+/**
+ * Si el campo viene en el body, lo parsea con `parse` (null = valor
+ * inválido, lo que dispara el error correspondiente). Si no viene
+ * (undefined), conserva el valor actual en vez de caer a 0/null.
+ */
+function fieldOrCurrent<T>(
+  value: unknown,
+  current: T,
+  parse: (value: unknown) => T | null
+): T | null {
+  return value === undefined ? current : parse(value);
 }
 
 /*
@@ -79,18 +91,22 @@ export async function GET(
 
     const { id } = await context.params;
 
+    const canViewCost = COST_VIEW_ROLES.includes(profile.role);
+
     const { data, error } = await supabase
       .from("products")
-      .select(`
-        *,
-        suppliers (
-          id,
-          name
-        )
-      `)
+      .select(
+        buildProductSelect({
+          includeCost: canViewCost,
+          extra: "suppliers ( id, name )",
+        })
+      )
       .eq("id", id)
       .eq("store_id", profile.store_id)
-      .single();
+      .single() as unknown as {
+        data: ProductRow | null;
+        error: { message: string } | null;
+      };
 
     if (error || !data) {
       return NextResponse.json(
@@ -100,7 +116,7 @@ export async function GET(
     }
 
     return NextResponse.json({
-      product: hideCostFields(data, profile.role, ["purchase_price"]),
+      product: flattenProductCost(data),
     });
   } catch (error) {
     console.error("ERROR OBTENIENDO PRODUCTO:", error);
@@ -168,17 +184,24 @@ export async function PUT(
 
     /*
     |--------------------------------------------------------------------------
-    | PRODUCTO ACTUAL
+    | PRODUCTO ACTUAL (+ costo actual, para conservarlo si no viene)
     |--------------------------------------------------------------------------
     */
 
     const { data: currentProduct, error: currentError } =
       await supabase
         .from("products")
-        .select("*")
+        .select(
+          buildProductSelect({
+            includeCost: true,
+          })
+        )
         .eq("id", id)
         .eq("store_id", profile.store_id)
-        .single();
+        .single() as unknown as {
+          data: ProductRow | null;
+          error: { message: string } | null;
+        };
 
     if (currentError || !currentProduct) {
       return NextResponse.json(
@@ -187,13 +210,22 @@ export async function PUT(
       );
     }
 
+    const current = flattenProductCost(currentProduct);
+
     /*
     |--------------------------------------------------------------------------
     | DATOS BÁSICOS
     |--------------------------------------------------------------------------
+    |
+    | Si un campo no viene en el body (undefined), se conserva el
+    | valor actual del producto en vez de limpiarlo o ponerlo en 0.
+    |
     */
 
-    const name = normalizeText(body.name);
+    const name =
+      body.name !== undefined
+        ? normalizeText(body.name)
+        : current.name;
 
     if (!name) {
       return NextResponse.json(
@@ -202,33 +234,82 @@ export async function PUT(
       );
     }
 
-    const description = normalizeText(body.description);
-    const brand = normalizeText(body.brand);
-    const category = normalizeText(body.category);
-    const subcategory = normalizeText(body.subcategory);
-    const supplierId = normalizeText(body.supplier_id);
-    const petType = normalizeText(body.pet_type);
-    const presentation = normalizeText(body.presentation);
+    const description =
+      body.description !== undefined
+        ? normalizeText(body.description)
+        : current.description;
+
+    const brand =
+      body.brand !== undefined
+        ? normalizeText(body.brand)
+        : current.brand;
+
+    const category =
+      body.category !== undefined
+        ? normalizeText(body.category)
+        : current.category;
+
+    const subcategory =
+      body.subcategory !== undefined
+        ? normalizeText(body.subcategory)
+        : current.subcategory;
+
+    const supplierId =
+      body.supplier_id !== undefined
+        ? normalizeText(body.supplier_id)
+        : current.supplier_id;
+
+    const petType =
+      body.pet_type !== undefined
+        ? normalizeText(body.pet_type)
+        : current.pet_type;
+
+    const presentation =
+      body.presentation !== undefined
+        ? normalizeText(body.presentation)
+        : current.presentation;
 
     const unitOfMeasure =
-      normalizeText(body.unit_of_measure) || "unidad";
+      body.unit_of_measure !== undefined
+        ? normalizeText(body.unit_of_measure) || "unidad"
+        : current.unit_of_measure;
 
-    const sku = normalizeText(body.sku);
-    const barcode = normalizeText(body.barcode);
-    const imageUrl = normalizeText(body.image_url);
+    const sku =
+      body.sku !== undefined
+        ? normalizeText(body.sku)
+        : current.sku;
+
+    const barcode =
+      body.barcode !== undefined
+        ? normalizeText(body.barcode)
+        : current.barcode;
+
+    const imageUrl =
+      body.image_url !== undefined
+        ? normalizeText(body.image_url)
+        : current.image_url;
 
     /*
     |--------------------------------------------------------------------------
     | PRECIOS
     |--------------------------------------------------------------------------
+    |
+    | purchase_price ya no vive en products: se maneja aparte, en
+    | product_costs, después de actualizar el producto (ver abajo).
+    |
     */
 
-    const purchasePrice = parseNonNegativeNumber(
+    const purchasePrice = fieldOrCurrent(
       body.purchase_price,
-      0
+      current.purchase_price ?? 0,
+      parseNonNegativeNumber
     );
 
-    const salePrice = parseNonNegativeNumber(body.sale_price, 0);
+    const salePrice = fieldOrCurrent(
+      body.sale_price,
+      current.sale_price,
+      parseNonNegativeNumber
+    );
 
     if (purchasePrice === null) {
       return NextResponse.json(
@@ -251,9 +332,17 @@ export async function PUT(
     */
 
     const taxType =
-      body.tax_type === "exento" ? "exento" : "porcentaje";
+      body.tax_type !== undefined
+        ? body.tax_type === "exento"
+          ? "exento"
+          : "porcentaje"
+        : current.tax_type;
 
-    let taxRate = parseNonNegativeNumber(body.tax_rate, 0);
+    let taxRate = fieldOrCurrent(
+      body.tax_rate,
+      current.tax_rate,
+      parseNonNegativeNumber
+    );
 
     if (taxRate === null) {
       return NextResponse.json(
@@ -282,14 +371,16 @@ export async function PUT(
     |--------------------------------------------------------------------------
     */
 
-    const minimumStock = parseNonNegativeInteger(
+    const minimumStock = fieldOrCurrent(
       body.minimum_stock,
-      0
+      current.minimum_stock,
+      parseNonNegativeInteger
     );
 
-    const reorderPoint = parseNonNegativeInteger(
+    const reorderPoint = fieldOrCurrent(
       body.reorder_point,
-      0
+      current.reorder_point,
+      parseNonNegativeInteger
     );
 
     if (minimumStock === null) {
@@ -306,33 +397,39 @@ export async function PUT(
       );
     }
 
-    let maximumStock: number | null = null;
+    let maximumStock: number | null = current.maximum_stock;
+
+    if (body.maximum_stock !== undefined) {
+      if (
+        body.maximum_stock === "" ||
+        body.maximum_stock === null
+      ) {
+        maximumStock = null;
+      } else {
+        maximumStock = parseNonNegativeInteger(
+          body.maximum_stock
+        );
+
+        if (maximumStock === null) {
+          return NextResponse.json(
+            { error: "El stock máximo no es válido." },
+            { status: 400 }
+          );
+        }
+      }
+    }
 
     if (
-      body.maximum_stock !== "" &&
-      body.maximum_stock !== null &&
-      body.maximum_stock !== undefined
+      maximumStock !== null &&
+      maximumStock < minimumStock
     ) {
-      maximumStock = parseNonNegativeInteger(
-        body.maximum_stock
+      return NextResponse.json(
+        {
+          error:
+            "El stock máximo no puede ser menor que el stock mínimo.",
+        },
+        { status: 400 }
       );
-
-      if (maximumStock === null) {
-        return NextResponse.json(
-          { error: "El stock máximo no es válido." },
-          { status: 400 }
-        );
-      }
-
-      if (maximumStock < minimumStock) {
-        return NextResponse.json(
-          {
-            error:
-              "El stock máximo no puede ser menor que el stock mínimo.",
-          },
-          { status: 400 }
-        );
-      }
     }
 
     /*
@@ -456,12 +553,12 @@ export async function PUT(
     const isActive =
       typeof body.is_active === "boolean"
         ? body.is_active
-        : currentProduct.is_active;
+        : current.is_active;
 
     const managesLots =
       typeof body.manages_lots === "boolean"
         ? body.manages_lots
-        : currentProduct.manages_lots;
+        : current.manages_lots;
 
     /*
     |--------------------------------------------------------------------------
@@ -469,7 +566,7 @@ export async function PUT(
     |--------------------------------------------------------------------------
     |
     | OBSERVA:
-    | NO incluimos stock.
+    | NO incluimos stock ni purchase_price.
     |
     */
 
@@ -487,7 +584,6 @@ export async function PUT(
         unit_of_measure: unitOfMeasure,
         sku,
         barcode,
-        purchase_price: purchasePrice,
         sale_price: salePrice,
         tax_rate: taxRate,
         tax_type: taxType,
@@ -501,8 +597,16 @@ export async function PUT(
       })
       .eq("id", id)
       .eq("store_id", profile.store_id)
-      .select()
-      .single();
+      .select(
+        buildProductSelect({
+          includeCost: false,
+          extra: "suppliers ( id, name )",
+        })
+      )
+      .single() as unknown as {
+        data: ProductRow | null;
+        error: { code?: string; message: string } | null;
+      };
 
     if (error) {
       console.error("ERROR ACTUALIZANDO PRODUCTO:", error);
@@ -523,10 +627,64 @@ export async function PUT(
       );
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | GUARDAR COSTO
+    |--------------------------------------------------------------------------
+    |
+    | Solo si purchase_price vino en el body: de lo contrario este
+    | upsert reescribiría product_costs en cada edición del producto
+    | (incluso al cambiar solo el nombre), con el riesgo de pisar un
+    | costo que otra persona haya actualizado al mismo tiempo con un
+    | valor que aquí solo es "el que tenía al leer el producto".
+    |
+    | Upsert y no update simple: si por lo que sea el producto no
+    | tenía fila en product_costs todavía (productos creados antes
+    | del backfill de la fase A, por ejemplo), esto la crea.
+    |
+    */
+
+    let costWarning: string | null = null;
+
+    if (body.purchase_price !== undefined) {
+      const { error: costError } = await supabase
+        .from("product_costs")
+        .upsert(
+          {
+            product_id: id,
+            store_id: profile.store_id,
+            purchase_price: purchasePrice,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "product_id" }
+        );
+
+      if (costError) {
+        console.error(
+          "ERROR GUARDANDO COSTO DEL PRODUCTO:",
+          costError
+        );
+
+        /*
+         * El producto SÍ se actualizó (el update de arriba ya tuvo
+         * éxito): un 400 aquí haría pensar que la edición completa
+         * falló. Se responde 200 con un aviso en vez de un error.
+         */
+        costWarning =
+          "El producto se actualizó, pero no se pudo guardar el costo de compra. Inténtalo de nuevo.";
+      }
+    }
+
     return NextResponse.json({
       ok: true,
+      ...(costWarning ? { warning: costWarning } : {}),
       message: "Producto actualizado correctamente.",
-      product: data,
+      product: {
+        ...data,
+        purchase_price: costWarning
+          ? current.purchase_price ?? 0
+          : purchasePrice,
+      },
     });
   } catch (error) {
     console.error("ERROR INTERNO:", error);

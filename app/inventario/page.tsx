@@ -182,8 +182,11 @@ export default function InventarioPage() {
       setLoadingMovements(true);
       setMovementError("");
 
+      // Vista previa de los últimos movimientos: se pide
+      // explícitamente un límite acotado en vez de depender del
+      // valor por defecto de la API para mostrar "los últimos".
       const response = await fetch(
-        "/api/inventory/movements"
+        "/api/inventory/movements?limit=10"
       );
 
       const result = await response.json();
@@ -1087,6 +1090,15 @@ export default function InventarioPage() {
 
             {canSeePurchases && (
               <Link
+                href="/inventario/carga"
+                className="inline-flex items-center justify-center rounded-lg border border-blue-300 bg-blue-50 px-5 py-3 font-medium text-blue-700 hover:bg-blue-100"
+              >
+                📝 Ajuste masivo
+              </Link>
+            )}
+
+            {canSeePurchases && (
+              <Link
                 href="/inventario/entradas/compras"
                 className="inline-flex items-center justify-center rounded-lg border border-green-300 bg-green-50 px-5 py-3 font-medium text-green-700 hover:bg-green-100"
               >
@@ -1425,14 +1437,23 @@ export default function InventarioPage() {
         {/* HISTORIAL */}
 
         <section className="mt-8">
-          <div className="mb-4">
-            <h2 className="text-2xl font-bold text-gray-900">
-              Historial de movimientos
-            </h2>
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">
+                Últimos movimientos
+              </h2>
 
-            <p className="mt-1 text-gray-600">
-              Consulta las entradas, salidas y ajustes de inventario.
-            </p>
+              <p className="mt-1 text-gray-600">
+                Las 10 entradas, salidas y ajustes más recientes.
+              </p>
+            </div>
+
+            <Link
+              href="/inventario/movimientos"
+              className="whitespace-nowrap text-sm font-medium text-gray-700 hover:text-gray-900"
+            >
+              Ver historial completo →
+            </Link>
           </div>
 
           {loadingMovements && (

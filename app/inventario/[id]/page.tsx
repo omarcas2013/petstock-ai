@@ -594,7 +594,9 @@ export default function EditarProductoPage() {
       }
 
       setMessage(
-        "✅ Producto actualizado correctamente."
+        result.warning
+          ? `⚠️ ${result.warning}`
+          : "✅ Producto actualizado correctamente."
       );
 
       setTimeout(() => {

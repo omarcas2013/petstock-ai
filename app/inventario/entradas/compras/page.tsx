@@ -76,10 +76,18 @@ type ReceiveModalState = {
   purchase?: Purchase | null;
 };
 
+const PURCHASES_PAGE_SIZE = 20;
+
 export default function ComprasPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [purchasesTotal, setPurchasesTotal] = useState(0);
+  const [purchasesOffset, setPurchasesOffset] = useState(0);
+
+  // 403 de GET /api/purchases: la página no se usa ni se muestra
+  // vacía, se reemplaza por un aviso de acceso.
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -89,6 +97,15 @@ export default function ComprasPage() {
   const [saving, setSaving] = useState(false);
   const [receivingPurchaseId, setReceivingPurchaseId] =
     useState<string | null>(null);
+
+  // =========================================================
+  // ANULAR COMPRA
+  // =========================================================
+
+  const [cancelPurchase, setCancelPurchase] =
+    useState<Purchase | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
 
@@ -133,7 +150,7 @@ export default function ComprasPage() {
   // CARGAR DATOS
   // =========================================================
 
-  async function loadData() {
+  async function loadData(nextOffset: number = purchasesOffset) {
     try {
       setLoading(true);
 
@@ -146,10 +163,17 @@ export default function ComprasPage() {
       ] = await Promise.all([
         fetch("/api/suppliers"),
         fetch("/api/products"),
-        fetch("/api/purchases"),
+        fetch(
+          `/api/purchases?limit=${PURCHASES_PAGE_SIZE}&offset=${nextOffset}`
+        ),
         fetch("/api/inventory/branches"),
         fetch("/api/inventory/warehouses"),
       ]);
+
+      if (purchasesResponse.status === 403) {
+        setAccessDenied(true);
+        return;
+      }
 
       if (!suppliersResponse.ok) {
         throw new Error(
@@ -214,6 +238,14 @@ export default function ComprasPage() {
           []
       );
 
+      setPurchasesTotal(
+        typeof purchasesData.total === "number"
+          ? purchasesData.total
+          : 0
+      );
+
+      setPurchasesOffset(nextOffset);
+
       const branchList =
         branchesData.branches ??
         branchesData ??
@@ -251,7 +283,8 @@ export default function ComprasPage() {
   }
 
   useEffect(() => {
-    loadData();
+    loadData(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // =========================================================
@@ -521,7 +554,7 @@ export default function ComprasPage() {
       );
 
       resetForm();
-      await loadData();
+      await loadData(0);
     } catch (error) {
       console.error(error);
 
@@ -942,8 +975,112 @@ export default function ComprasPage() {
   }
 
   // =========================================================
+  // ANULAR COMPRA
+  // =========================================================
+
+  function openCancelModal(purchase: Purchase) {
+    setCancelPurchase(purchase);
+    setCancelReason("");
+  }
+
+  function closeCancelModal() {
+    if (cancelling) {
+      return;
+    }
+
+    setCancelPurchase(null);
+    setCancelReason("");
+  }
+
+  async function handleCancelPurchase() {
+    if (!cancelPurchase) {
+      return;
+    }
+
+    const reason = cancelReason.trim();
+
+    if (!reason) {
+      alert("El motivo de la anulación es obligatorio.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `¿Anular la compra ${
+          cancelPurchase.document_number || cancelPurchase.id
+        }? Esta acción no se puede deshacer.`
+      )
+    ) {
+      return;
+    }
+
+    setCancelling(true);
+
+    try {
+      const response = await fetch(
+        `/api/purchases/${cancelPurchase.id}/cancel`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ reason }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "No se pudo anular la compra."
+        );
+      }
+
+      setCancelPurchase(null);
+      setCancelReason("");
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "No se pudo anular la compra."
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  // =========================================================
   // UI
   // =========================================================
+
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <p className="text-4xl">🔒</p>
+
+          <h1 className="mt-4 text-xl font-bold text-slate-900">
+            No tienes acceso a Compras
+          </h1>
+
+          <p className="mt-2 text-sm text-slate-600">
+            Esta sección es solo para owner, admin o manager.
+          </p>
+
+          <Link
+            href="/inventario"
+            className="mt-6 inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Volver al inventario
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -1081,9 +1218,16 @@ export default function ComprasPage() {
                           purchase.status
                         );
 
+                      const normalizedStatus =
+                        status.toLowerCase();
+
                       const isReceived =
-                        status.toLowerCase() ===
+                        normalizedStatus ===
                         "recibida";
+
+                      const isCancelled =
+                        normalizedStatus ===
+                        "cancelada";
 
                       const productCount =
                         purchase
@@ -1129,6 +1273,10 @@ export default function ComprasPage() {
                               <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
                                 Recibida
                               </span>
+                            ) : isCancelled ? (
+                              <span className="inline-flex rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700">
+                                Cancelada
+                              </span>
                             ) : (
                               <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
                                 Pendiente
@@ -1141,25 +1289,47 @@ export default function ComprasPage() {
                               <span className="inline-flex items-center rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
                                 ✓ Recibida
                               </span>
+                            ) : isCancelled ? (
+                              <span className="inline-flex items-center rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                                ✕ Anulada
+                              </span>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openReceiveModal(
-                                    purchase
-                                  )
-                                }
-                                disabled={
-                                  receivingPurchaseId ===
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openReceiveModal(
+                                      purchase
+                                    )
+                                  }
+                                  disabled={
+                                    receivingPurchaseId ===
+                                    purchase.id
+                                  }
+                                  className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {receivingPurchaseId ===
                                   purchase.id
-                                }
-                                className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {receivingPurchaseId ===
-                                purchase.id
-                                  ? "Recibiendo..."
-                                  : "📦 Recibir compra"}
-                              </button>
+                                    ? "Recibiendo..."
+                                    : "📦 Recibir compra"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openCancelModal(
+                                      purchase
+                                    )
+                                  }
+                                  disabled={
+                                    receivingPurchaseId ===
+                                    purchase.id
+                                  }
+                                  className="inline-flex items-center rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  ✕ Anular
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1170,6 +1340,62 @@ export default function ComprasPage() {
               </tbody>
             </table>
           </div>
+
+          {!loading && purchases.length > 0 && (
+            <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+              <p className="text-sm text-slate-500">
+                Página{" "}
+                {Math.floor(
+                  purchasesOffset / PURCHASES_PAGE_SIZE
+                ) + 1}{" "}
+                de{" "}
+                {Math.max(
+                  1,
+                  Math.ceil(
+                    purchasesTotal / PURCHASES_PAGE_SIZE
+                  )
+                )}{" "}
+                · {purchasesTotal} compras en total
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={purchasesOffset === 0}
+                  onClick={() =>
+                    loadData(
+                      Math.max(
+                        0,
+                        purchasesOffset -
+                          PURCHASES_PAGE_SIZE
+                      )
+                    )
+                  }
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Anterior
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    purchasesOffset +
+                      PURCHASES_PAGE_SIZE >=
+                    purchasesTotal
+                  }
+                  onClick={() =>
+                    loadData(
+                      purchasesOffset +
+                        PURCHASES_PAGE_SIZE
+                    )
+                  }
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Siguiente
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2092,6 +2318,64 @@ export default function ComprasPage() {
                 {receivingPurchaseId
                   ? "Recibiendo..."
                   : "✓ Confirmar recepción"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================
+          MODAL ANULAR COMPRA
+          ===================================================== */}
+
+      {cancelPurchase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-slate-900">
+              Anular compra
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              {cancelPurchase.document_number ||
+                cancelPurchase.id}{" "}
+              — esta acción no se puede deshacer.
+            </p>
+
+            <label className="mb-2 mt-4 block text-sm font-semibold text-slate-700">
+              Motivo de la anulación
+            </label>
+
+            <textarea
+              value={cancelReason}
+              onChange={(event) =>
+                setCancelReason(event.target.value)
+              }
+              rows={3}
+              placeholder="Por ejemplo: el proveedor no tenía el producto disponible."
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500"
+            />
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeCancelModal}
+                disabled={cancelling}
+                className="rounded-lg border border-slate-300 px-4 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Volver
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleCancelPurchase()}
+                disabled={
+                  cancelling || !cancelReason.trim()
+                }
+                className="rounded-lg bg-rose-600 px-4 py-2.5 font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {cancelling
+                  ? "Anulando..."
+                  : "✕ Anular compra"}
               </button>
             </div>
           </div>

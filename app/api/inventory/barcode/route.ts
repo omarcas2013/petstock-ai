@@ -4,6 +4,7 @@ import {
   requireRole,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import { flattenProductCost, type ProductRow } from "@/lib/products/select";
 
 export async function POST(request: Request) {
   try {
@@ -82,14 +83,17 @@ export async function POST(request: Request) {
         minimum_stock,
         maximum_stock,
         sale_price,
-        purchase_price,
+        product_costs ( purchase_price ),
         suppliers (
           id,
           name
         )
       `)
       .eq("barcode", barcode)
-      .eq("store_id", profile.store_id);
+      .eq("store_id", profile.store_id) as unknown as {
+        data: ProductRow[] | null;
+        error: { message: string } | null;
+      };
 
     if (productError) {
       console.error(
@@ -122,7 +126,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const product = products[0];
+    const product = flattenProductCost(products[0]);
 
     /*
      * Registrar movimiento utilizando la función
@@ -176,7 +180,7 @@ export async function POST(request: Request) {
           minimum_stock,
           maximum_stock,
           sale_price,
-          purchase_price,
+          product_costs ( purchase_price ),
           suppliers (
             id,
             name
@@ -184,7 +188,10 @@ export async function POST(request: Request) {
         `)
         .eq("id", product.id)
         .eq("store_id", profile.store_id)
-        .single();
+        .single() as unknown as {
+          data: ProductRow | null;
+          error: { message: string } | null;
+        };
 
     if (updatedError || !updatedProduct) {
       return NextResponse.json({
@@ -197,7 +204,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       movement,
-      product: updatedProduct,
+      product: flattenProductCost(updatedProduct),
     });
   } catch (error) {
     console.error(error);

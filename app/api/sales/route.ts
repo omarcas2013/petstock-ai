@@ -1,7 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import {
+  escapeLikePattern,
+  quoteOrFilterValue,
+} from "@/lib/supabase/like";
+import { rangedQuery } from "@/lib/supabase/paginate";
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const SALES_SELECT = `
+  id,
+  store_id,
+  customer_name,
+  payment_method,
+  subtotal,
+  total,
+  created_at,
+  sale_items (
+    id,
+    product_id,
+    quantity,
+    unit_price,
+    subtotal,
+    products (
+      id,
+      name,
+      sku
+    )
+  )
+`;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
 
 type SaleItemInput = {
   product_id: string;
@@ -14,7 +63,7 @@ type CreateSaleBody = {
   customer_name?: string | null;
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireRole(SALES_ROLES);
 
@@ -24,40 +73,81 @@ export async function GET() {
 
     const { supabase, profile } = auth;
 
+    const { searchParams } = new URL(request.url);
+
+    const { limit, offset } = parsePageParams(searchParams);
+
+    const search = (searchParams.get("search") ?? "").trim();
+    const paymentMethod = (
+      searchParams.get("payment_method") ?? "todos"
+    ).trim();
+    const sort = searchParams.get("sort") ?? "recent";
+
     // ==========================================================
-    // OBTENER VENTAS
+    // OBTENER VENTAS (paginado en el servidor)
     // ==========================================================
 
-    const { data, error } = await fetchAllRows((from, to) =>
-      supabase
-        .from("sales")
-        .select(
-          `
-        id,
-        store_id,
-        customer_name,
-        payment_method,
-        subtotal,
-        total,
-        created_at,
-        sale_items (
-          id,
-          product_id,
-          quantity,
-          unit_price,
-          subtotal,
-          products (
-            id,
-            name,
-            sku
-          )
-        )
-      `
-        )
-        .eq("store_id", profile.store_id)
-        .order("created_at", { ascending: false })
-        .order("id")
-        .range(from, to)
+    /*
+     * PostgREST no admite casts (id::text) dentro de un filtro, así
+     * que la búsqueda por ID solo se activa cuando el texto completo
+     * es un UUID válido (comparación exacta); el resto del tiempo
+     * busca por customer_name. El valor del ilike se escapa y se
+     * envuelve en comillas (quoteOrFilterValue) porque va dentro del
+     * string combinado de .or() (confirmado contra la API real que,
+     * sin comillas, una coma o paréntesis en el texto rompe el
+     * parseo con PGRST100).
+     */
+    let orFilter: string | null = null;
+
+    if (search) {
+      const pattern = quoteOrFilterValue(
+        `%${escapeLikePattern(search)}%`
+      );
+
+      const conditions = [`customer_name.ilike.${pattern}`];
+
+      if (UUID_RE.test(search)) {
+        conditions.push(`id.eq.${search}`);
+      }
+
+      orFilter = conditions.join(",");
+    }
+
+    let dataQuery = supabase
+      .from("sales")
+      .select(SALES_SELECT, { count: "exact" })
+      .eq("store_id", profile.store_id);
+
+    let countQuery = supabase
+      .from("sales")
+      .select("id", { count: "exact", head: true })
+      .eq("store_id", profile.store_id);
+
+    if (paymentMethod !== "todos") {
+      dataQuery = dataQuery.eq("payment_method", paymentMethod);
+      countQuery = countQuery.eq("payment_method", paymentMethod);
+    }
+
+    if (orFilter) {
+      dataQuery = dataQuery.or(orFilter);
+      countQuery = countQuery.or(orFilter);
+    }
+
+    if (sort === "oldest") {
+      dataQuery = dataQuery.order("created_at", { ascending: true });
+    } else if (sort === "highest") {
+      dataQuery = dataQuery.order("total", { ascending: false });
+    } else if (sort === "lowest") {
+      dataQuery = dataQuery.order("total", { ascending: true });
+    } else {
+      dataQuery = dataQuery.order("created_at", { ascending: false });
+    }
+
+    dataQuery = dataQuery.order("id");
+
+    const { data, error, count } = await rangedQuery(
+      () => dataQuery.range(offset, offset + limit - 1),
+      () => countQuery
     );
 
     if (error) {
@@ -71,6 +161,9 @@ export async function GET() {
 
     return NextResponse.json({
       sales: data ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error("Error GET /api/sales:", error);

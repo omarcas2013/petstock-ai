@@ -1,50 +1,43 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  bogotaEndOfDay,
-  bogotaStartOfDay,
   getBogotaDateKey,
   getBogotaMonthStartKey,
 } from "@/lib/dates";
 
-type Product = {
-  id: string;
-  name: string;
-  sku: string | null;
-};
-
-type SaleItem = {
-  id: string;
-  product_id: string;
-  quantity: number;
-  unit_price: number;
-  subtotal: number;
-  products?: Product | null;
-};
-
-type Sale = {
-  id: string;
-  customer_name: string | null;
+type PaymentSummaryRow = {
   payment_method: string;
-  subtotal: number;
+  count: number;
   total: number;
-  created_at: string;
-  sale_items?: SaleItem[] | null;
 };
 
-type ProductSummary = {
-  productId: string;
+type TopProductRow = {
+  product_id: string;
   name: string;
   sku: string | null;
   quantity: number;
   revenue: number;
+};
+
+type SaleRow = {
+  id: string;
+  customer_name: string | null;
+  payment_method: string;
+  total: number;
+  created_at: string;
+  units: number;
+};
+
+type SalesReport = {
+  total_revenue: number;
+  sale_count: number;
+  total_units: number;
+  average_ticket: number;
+  payment_summary: PaymentSummaryRow[];
+  top_products: TopProductRow[];
+  sales: SaleRow[];
 };
 
 // "Hoy" en Bogotá, no en la zona del navegador.
@@ -57,65 +50,88 @@ export default function ReporteVentasPage() {
 
   const initialToday = getTodayString();
 
-  const [sales, setSales] = useState<Sale[]>([]);
+  const [report, setReport] = useState<SalesReport | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [startDate, setStartDate] =
-    useState(initialToday);
+  const [startDate, setStartDate] = useState(initialToday);
+  const [endDate, setEndDate] = useState(initialToday);
 
-  const [endDate, setEndDate] =
-    useState(initialToday);
+  // Rango que realmente respondió el servidor (ver reportes de
+  // movimientos: evita que el encabezado muestre fechas que el
+  // reporte en pantalla todavía no refleja).
+  const [loadedRange, setLoadedRange] = useState({
+    desde: initialToday,
+    hasta: initialToday,
+  });
 
-  const loadSales = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
+  // Descarta una respuesta tardía si el usuario cambió las fechas
+  // otra vez antes de que esta llegara.
+  const latestRequestRef = useRef(0);
 
-      const response = await fetch("/api/sales", {
-        method: "GET",
-        cache: "no-store",
-      });
+  const loadReport = useCallback(
+    async (desde: string, hasta: string) => {
+      const requestId = ++latestRequestRef.current;
 
-      const result = await response.json();
+      try {
+        setLoading(true);
+        setError("");
 
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-            "Error cargando las ventas.",
+        const response = await fetch(
+          `/api/reports/sales?desde=${desde}&hasta=${hasta}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
         );
+
+        const result = await response.json();
+
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Error cargando el reporte."
+          );
+        }
+
+        setReport(result.report ?? null);
+        setLoadedRange({ desde, hasta });
+      } catch (error) {
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
+        console.error("ERROR REPORTE VENTAS:", error);
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Error cargando el reporte."
+        );
+      } finally {
+        if (latestRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
-
-      setSales(
-        Array.isArray(result.sales)
-          ? result.sales
-          : [],
-      );
-    } catch (error) {
-      console.error(
-        "ERROR REPORTE VENTAS:",
-        error,
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Error cargando el reporte.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadSales();
-    }, 0);
+      void loadReport(startDate, endDate);
+    }, 400);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [loadSales]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
   function formatPrice(price: number) {
     return new Intl.NumberFormat("es-CO", {
@@ -134,8 +150,7 @@ export default function ReporteVentasPage() {
   }
 
   function formatShortDate(date: string) {
-    const [year, month, day] =
-      date.split("-");
+    const [year, month, day] = date.split("-");
 
     if (!year || !month || !day) {
       return date;
@@ -144,179 +159,7 @@ export default function ReporteVentasPage() {
     return `${day}/${month}/${year}`;
   }
 
-  const filteredSales = useMemo(() => {
-    if (!startDate || !endDate) {
-      return sales;
-    }
-
-    const start = new Date(
-      bogotaStartOfDay(startDate),
-    );
-
-    const end = new Date(
-      bogotaEndOfDay(endDate),
-    );
-
-    return sales
-      .filter((sale) => {
-        const saleDate = new Date(
-          sale.created_at,
-        );
-
-        return (
-          saleDate >= start &&
-          saleDate <= end
-        );
-      })
-      .sort(
-        (a, b) =>
-          new Date(
-            b.created_at,
-          ).getTime() -
-          new Date(
-            a.created_at,
-          ).getTime(),
-      );
-  }, [sales, startDate, endDate]);
-
-  const totalRevenue = useMemo(() => {
-    return filteredSales.reduce(
-      (sum, sale) =>
-        sum + Number(sale.total || 0),
-      0,
-    );
-  }, [filteredSales]);
-
-  const totalUnits = useMemo(() => {
-    return filteredSales.reduce(
-      (sum, sale) => {
-        const items = Array.isArray(
-          sale.sale_items,
-        )
-          ? sale.sale_items
-          : [];
-
-        return (
-          sum +
-          items.reduce(
-            (itemSum, item) =>
-              itemSum +
-              Number(item.quantity || 0),
-            0,
-          )
-        );
-      },
-      0,
-    );
-  }, [filteredSales]);
-
-  const averageTicket = useMemo(() => {
-    if (filteredSales.length === 0) {
-      return 0;
-    }
-
-    return (
-      totalRevenue /
-      filteredSales.length
-    );
-  }, [
-    filteredSales.length,
-    totalRevenue,
-  ]);
-
-  const paymentSummary = useMemo(() => {
-    const summary = new Map<
-      string,
-      {
-        count: number;
-        total: number;
-      }
-    >();
-
-    for (const sale of filteredSales) {
-      const method =
-        sale.payment_method || "otro";
-
-      const current =
-        summary.get(method) || {
-          count: 0,
-          total: 0,
-        };
-
-      summary.set(method, {
-        count: current.count + 1,
-        total:
-          current.total +
-          Number(sale.total || 0),
-      });
-    }
-
-    return [...summary.entries()].sort(
-      (a, b) =>
-        b[1].total - a[1].total,
-    );
-  }, [filteredSales]);
-
-  const productSummary = useMemo(() => {
-    const products = new Map<
-      string,
-      ProductSummary
-    >();
-
-    for (const sale of filteredSales) {
-      const items = Array.isArray(
-        sale.sale_items,
-      )
-        ? sale.sale_items
-        : [];
-
-      for (const item of items) {
-        const existing =
-          products.get(item.product_id);
-
-        const productName =
-          item.products?.name ||
-          "Producto";
-
-        const sku =
-          item.products?.sku || null;
-
-        if (existing) {
-          existing.quantity += Number(
-            item.quantity || 0,
-          );
-
-          existing.revenue += Number(
-            item.subtotal || 0,
-          );
-        } else {
-          products.set(item.product_id, {
-            productId:
-              item.product_id,
-            name: productName,
-            sku,
-            quantity: Number(
-              item.quantity || 0,
-            ),
-            revenue: Number(
-              item.subtotal || 0,
-            ),
-          });
-        }
-      }
-    }
-
-    return [...products.values()]
-      .sort(
-        (a, b) =>
-          b.quantity - a.quantity,
-      )
-      .slice(0, 10);
-  }, [filteredSales]);
-
-  function paymentLabel(
-    paymentMethod: string,
-  ) {
+  function paymentLabel(paymentMethod: string) {
     switch (paymentMethod) {
       case "efectivo":
         return "Efectivo";
@@ -344,6 +187,7 @@ export default function ReporteVentasPage() {
 
     setStartDate(today);
     setEndDate(today);
+    void loadReport(today, today);
   }
 
   function setThisMonth() {
@@ -352,7 +196,16 @@ export default function ReporteVentasPage() {
 
     setStartDate(firstDay);
     setEndDate(lastDay);
+    void loadReport(firstDay, lastDay);
   }
+
+  const paymentSummary = report?.payment_summary ?? [];
+  const topProducts = report?.top_products ?? [];
+  const sales = report?.sales ?? [];
+  const totalRevenue = report?.total_revenue ?? 0;
+  const totalUnits = report?.total_units ?? 0;
+  const saleCount = report?.sale_count ?? 0;
+  const averageTicket = report?.average_ticket ?? 0;
 
   return (
     <>
@@ -402,17 +255,15 @@ export default function ReporteVentasPage() {
               </h1>
 
               <p className="mt-2 text-gray-600">
-                Consulta y genera reportes de
-                las ventas registradas.
+                Consulta y genera reportes de las ventas
+                registradas.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() =>
-                  router.push("/")
-                }
+                onClick={() => router.push("/")}
                 className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
               >
                 Dashboard
@@ -440,23 +291,17 @@ export default function ReporteVentasPage() {
             </h1>
 
             <p className="mt-2 text-sm text-gray-500">
-              Período:{" "}
-              {formatShortDate(startDate)}{" "}
-              al{" "}
-              {formatShortDate(endDate)}
+              Período: {formatShortDate(loadedRange.desde)} al{" "}
+              {formatShortDate(loadedRange.hasta)}
             </p>
 
             <p className="mt-1 text-xs text-gray-400">
               Generado el{" "}
-              {new Intl.DateTimeFormat(
-                "es-CO",
-                {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                  timeZone:
-                    "America/Bogota",
-                },
-              ).format(new Date())}
+              {new Intl.DateTimeFormat("es-CO", {
+                dateStyle: "medium",
+                timeStyle: "short",
+                timeZone: "America/Bogota",
+              }).format(new Date())}
             </p>
           </div>
 
@@ -477,9 +322,7 @@ export default function ReporteVentasPage() {
                   type="date"
                   value={startDate}
                   onChange={(event) =>
-                    setStartDate(
-                      event.target.value,
-                    )
+                    setStartDate(event.target.value)
                   }
                   className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
                 />
@@ -498,9 +341,7 @@ export default function ReporteVentasPage() {
                   type="date"
                   value={endDate}
                   onChange={(event) =>
-                    setEndDate(
-                      event.target.value,
-                    )
+                    setEndDate(event.target.value)
                   }
                   className="mt-2 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
                 />
@@ -527,7 +368,7 @@ export default function ReporteVentasPage() {
               <button
                 type="button"
                 onClick={() =>
-                  void loadSales()
+                  void loadReport(startDate, endDate)
                 }
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
@@ -544,14 +385,12 @@ export default function ReporteVentasPage() {
                 Error cargando reporte
               </p>
 
-              <p className="mt-1 text-sm">
-                {error}
-              </p>
+              <p className="mt-1 text-sm">{error}</p>
 
               <button
                 type="button"
                 onClick={() =>
-                  void loadSales()
+                  void loadReport(startDate, endDate)
                 }
                 className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
               >
@@ -578,9 +417,8 @@ export default function ReporteVentasPage() {
                 </p>
 
                 <p className="mt-1 text-lg font-semibold text-gray-900">
-                  {formatShortDate(startDate)}{" "}
-                  al{" "}
-                  {formatShortDate(endDate)}
+                  {formatShortDate(loadedRange.desde)} al{" "}
+                  {formatShortDate(loadedRange.hasta)}
                 </p>
               </div>
 
@@ -593,9 +431,7 @@ export default function ReporteVentasPage() {
                   </p>
 
                   <p className="mt-2 text-2xl font-bold text-gray-900">
-                    {formatPrice(
-                      totalRevenue,
-                    )}
+                    {formatPrice(totalRevenue)}
                   </p>
                 </div>
 
@@ -605,7 +441,7 @@ export default function ReporteVentasPage() {
                   </p>
 
                   <p className="mt-2 text-2xl font-bold text-gray-900">
-                    {filteredSales.length}
+                    {saleCount}
                   </p>
                 </div>
 
@@ -625,9 +461,7 @@ export default function ReporteVentasPage() {
                   </p>
 
                   <p className="mt-2 text-2xl font-bold text-gray-900">
-                    {formatPrice(
-                      averageTicket,
-                    )}
+                    {formatPrice(averageTicket)}
                   </p>
                 </div>
               </div>
@@ -644,51 +478,44 @@ export default function ReporteVentasPage() {
                     </h2>
 
                     <p className="mt-1 text-sm text-gray-500">
-                      Distribución de las ventas
-                      del período.
+                      Distribución de las ventas del
+                      período.
                     </p>
                   </div>
 
-                  {paymentSummary.length ===
-                  0 ? (
+                  {paymentSummary.length === 0 ? (
                     <div className="rounded-xl bg-gray-50 p-8 text-center">
                       <p className="font-medium text-gray-700">
-                        No hay ventas en este
-                        período.
+                        No hay ventas en este período.
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {paymentSummary.map(
-                        ([method, summary]) => (
-                          <div
-                            key={method}
-                            className="flex items-center justify-between rounded-xl border border-gray-200 p-4"
-                          >
-                            <div>
-                              <p className="font-medium text-gray-900">
-                                {paymentLabel(
-                                  method,
-                                )}
-                              </p>
-
-                              <p className="mt-1 text-xs text-gray-500">
-                                {summary.count}{" "}
-                                {summary.count ===
-                                1
-                                  ? "venta"
-                                  : "ventas"}
-                              </p>
-                            </div>
-
-                            <p className="font-bold text-gray-900">
-                              {formatPrice(
-                                summary.total,
+                      {paymentSummary.map((summary) => (
+                        <div
+                          key={summary.payment_method}
+                          className="flex items-center justify-between rounded-xl border border-gray-200 p-4"
+                        >
+                          <div>
+                            <p className="font-medium text-gray-900">
+                              {paymentLabel(
+                                summary.payment_method
                               )}
                             </p>
+
+                            <p className="mt-1 text-xs text-gray-500">
+                              {summary.count}{" "}
+                              {summary.count === 1
+                                ? "venta"
+                                : "ventas"}
+                            </p>
                           </div>
-                        ),
-                      )}
+
+                          <p className="font-bold text-gray-900">
+                            {formatPrice(summary.total)}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </section>
@@ -702,13 +529,11 @@ export default function ReporteVentasPage() {
                     </h2>
 
                     <p className="mt-1 text-sm text-gray-500">
-                      Ranking por unidades
-                      vendidas.
+                      Ranking por unidades vendidas.
                     </p>
                   </div>
 
-                  {productSummary.length ===
-                  0 ? (
+                  {topProducts.length === 0 ? (
                     <div className="rounded-xl bg-gray-50 p-8 text-center">
                       <p className="font-medium text-gray-700">
                         No hay productos vendidos.
@@ -716,59 +541,43 @@ export default function ReporteVentasPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {productSummary.map(
-                        (
-                          product,
-                          index,
-                        ) => (
-                          <div
-                            key={
-                              product.productId
-                            }
-                            className="flex items-center justify-between rounded-xl border border-gray-200 p-4"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-xs font-bold text-white">
-                                {index + 1}
-                              </span>
+                      {topProducts.map((product, index) => (
+                        <div
+                          key={product.product_id}
+                          className="flex items-center justify-between rounded-xl border border-gray-200 p-4"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-xs font-bold text-white">
+                              {index + 1}
+                            </span>
 
-                              <div>
-                                <p className="font-medium text-gray-900">
-                                  {
-                                    product.name
-                                  }
+                            <div>
+                              <p className="font-medium text-gray-900">
+                                {product.name}
+                              </p>
+
+                              {product.sku && (
+                                <p className="mt-1 font-mono text-xs text-gray-400">
+                                  {product.sku}
                                 </p>
-
-                                {product.sku && (
-                                  <p className="mt-1 font-mono text-xs text-gray-400">
-                                    {
-                                      product.sku
-                                    }
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="text-right">
-                              <p className="font-bold text-gray-900">
-                                {
-                                  product.quantity
-                                }{" "}
-                                {product.quantity ===
-                                1
-                                  ? "unidad"
-                                  : "unidades"}
-                              </p>
-
-                              <p className="mt-1 text-xs text-gray-500">
-                                {formatPrice(
-                                  product.revenue,
-                                )}
-                              </p>
+                              )}
                             </div>
                           </div>
-                        ),
-                      )}
+
+                          <div className="text-right">
+                            <p className="font-bold text-gray-900">
+                              {product.quantity}{" "}
+                              {product.quantity === 1
+                                ? "unidad"
+                                : "unidades"}
+                            </p>
+
+                            <p className="mt-1 text-xs text-gray-500">
+                              {formatPrice(product.revenue)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </section>
@@ -783,22 +592,19 @@ export default function ReporteVentasPage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-gray-500">
-                    Todas las ventas incluidas
-                    en el período seleccionado.
+                    Todas las ventas incluidas en el período
+                    seleccionado.
                   </p>
                 </div>
 
-                {filteredSales.length ===
-                0 ? (
+                {sales.length === 0 ? (
                   <div className="rounded-xl bg-gray-50 p-10 text-center">
                     <p className="font-medium text-gray-700">
-                      No hay ventas para este
-                      período.
+                      No hay ventas para este período.
                     </p>
 
                     <p className="mt-1 text-sm text-gray-500">
-                      Selecciona otro rango de
-                      fechas.
+                      Selecciona otro rango de fechas.
                     </p>
                   </div>
                 ) : (
@@ -829,74 +635,45 @@ export default function ReporteVentasPage() {
                       </thead>
 
                       <tbody className="divide-y">
-                        {filteredSales.map(
-                          (sale) => {
-                            const units =
-                              Array.isArray(
-                                sale.sale_items,
-                              )
-                                ? sale.sale_items.reduce(
-                                    (
-                                      sum,
-                                      item,
-                                    ) =>
-                                      sum +
-                                      Number(
-                                        item.quantity ||
-                                          0,
-                                      ),
-                                    0,
-                                  )
-                                : 0;
+                        {sales.map((sale) => (
+                          <tr
+                            key={sale.id}
+                            className="hover:bg-gray-50"
+                          >
+                            <td className="px-4 py-3">
+                              <p className="text-sm font-medium text-gray-900">
+                                {formatDate(
+                                  sale.created_at
+                                )}
+                              </p>
 
-                            return (
-                              <tr
-                                key={sale.id}
-                                className="hover:bg-gray-50"
-                              >
-                                <td className="px-4 py-3">
-                                  <p className="text-sm font-medium text-gray-900">
-                                    {formatDate(
-                                      sale.created_at,
-                                    )}
-                                  </p>
+                              <p className="mt-1 font-mono text-xs text-gray-400">
+                                {sale.id.slice(0, 8)}...
+                              </p>
+                            </td>
 
-                                  <p className="mt-1 font-mono text-xs text-gray-400">
-                                    {sale.id.slice(
-                                      0,
-                                      8,
-                                    )}
-                                    ...
-                                  </p>
-                                </td>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {sale.customer_name ||
+                                "Cliente general"}
+                            </td>
 
-                                <td className="px-4 py-3 text-sm text-gray-700">
-                                  {sale.customer_name ||
-                                    "Cliente general"}
-                                </td>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {paymentLabel(
+                                sale.payment_method
+                              )}
+                            </td>
 
-                                <td className="px-4 py-3 text-sm text-gray-700">
-                                  {paymentLabel(
-                                    sale.payment_method,
-                                  )}
-                                </td>
+                            <td className="px-4 py-3 text-center text-sm text-gray-700">
+                              {sale.units}
+                            </td>
 
-                                <td className="px-4 py-3 text-center text-sm text-gray-700">
-                                  {units}
-                                </td>
-
-                                <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                                  {formatPrice(
-                                    Number(
-                                      sale.total ||
-                                        0,
-                                    ),
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          },
-                        )}
+                            <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                              {formatPrice(
+                                Number(sale.total || 0)
+                              )}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
 
                       <tfoot className="border-t-2 border-gray-300">
@@ -913,9 +690,7 @@ export default function ReporteVentasPage() {
                           </td>
 
                           <td className="px-4 py-4 text-right text-lg font-bold text-gray-900">
-                            {formatPrice(
-                              totalRevenue,
-                            )}
+                            {formatPrice(totalRevenue)}
                           </td>
                         </tr>
                       </tfoot>
@@ -934,19 +709,12 @@ export default function ReporteVentasPage() {
                     </p>
 
                     <p className="mt-1 text-lg font-bold">
-                      Reporte generado
-                      correctamente
+                      Reporte generado correctamente
                     </p>
 
                     <p className="mt-1 text-sm text-gray-400">
-                      Período:{" "}
-                      {formatShortDate(
-                        startDate,
-                      )}{" "}
-                      al{" "}
-                      {formatShortDate(
-                        endDate,
-                      )}
+                      Período: {formatShortDate(loadedRange.desde)}{" "}
+                      al {formatShortDate(loadedRange.hasta)}
                     </p>
                   </div>
 
@@ -956,9 +724,7 @@ export default function ReporteVentasPage() {
                     </p>
 
                     <p className="text-2xl font-bold">
-                      {formatPrice(
-                        totalRevenue,
-                      )}
+                      {formatPrice(totalRevenue)}
                     </p>
                   </div>
                 </div>
