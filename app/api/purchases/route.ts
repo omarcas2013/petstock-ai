@@ -5,9 +5,70 @@ import {
   requireRole,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import { rangedQuery } from "@/lib/supabase/paginate";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+
+const VALID_STATUSES = ["pendiente", "recibida", "cancelada"];
+
+const PURCHASES_SELECT = `
+  id,
+  document_number,
+  purchase_date,
+  status,
+  subtotal,
+  total,
+  notes,
+  created_at,
+
+  suppliers (
+    id,
+    name
+  ),
+
+  purchase_items (
+    id,
+    quantity,
+    unit_cost,
+    subtotal,
+
+    products (
+      id,
+      name,
+      sku
+    )
+  ),
+
+  receipts (
+    id,
+    receipt_number,
+    received_at,
+    status,
+    scope,
+    branch_id,
+    warehouse_id,
+    location_id,
+
+    branches (
+      id,
+      name,
+      code
+    ),
+
+    warehouses (
+      id,
+      name,
+      code
+    ),
+
+    locations (
+      id,
+      name,
+      code
+    )
+  )
+`;
 
 function parsePageParams(searchParams: URLSearchParams) {
   const limitRaw = Number(searchParams.get("limit"));
@@ -46,72 +107,38 @@ export async function GET(request: NextRequest) {
 
     const { limit, offset } = parsePageParams(searchParams);
 
-    const { data, error, count } = await supabase
+    const statusFilter = searchParams.get("status") ?? "";
+
+    if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
+      return NextResponse.json(
+        { error: "El estado solicitado no es válido." },
+        { status: 400 }
+      );
+    }
+
+    let dataQuery = supabase
       .from("purchases")
-      .select(
-        `
-        id,
-        document_number,
-        purchase_date,
-        status,
-        subtotal,
-        total,
-        notes,
-        created_at,
+      .select(PURCHASES_SELECT, { count: "exact" })
+      .eq("store_id", profile.store_id);
 
-        suppliers (
-          id,
-          name
-        ),
+    let countQuery = supabase
+      .from("purchases")
+      .select("id", { count: "exact", head: true })
+      .eq("store_id", profile.store_id);
 
-        purchase_items (
-          id,
-          quantity,
-          unit_cost,
-          subtotal,
+    if (statusFilter) {
+      dataQuery = dataQuery.eq("status", statusFilter);
+      countQuery = countQuery.eq("status", statusFilter);
+    }
 
-          products (
-            id,
-            name,
-            sku
-          )
-        ),
-
-        receipts (
-          id,
-          receipt_number,
-          received_at,
-          status,
-          scope,
-          branch_id,
-          warehouse_id,
-          location_id,
-
-          branches (
-            id,
-            name,
-            code
-          ),
-
-          warehouses (
-            id,
-            name,
-            code
-          ),
-
-          locations (
-            id,
-            name,
-            code
-          )
-        )
-      `,
-        { count: "exact" }
-      )
-      .eq("store_id", profile.store_id)
+    dataQuery = dataQuery
       .order("purchase_date", { ascending: false })
-      .order("id")
-      .range(offset, offset + limit - 1);
+      .order("id");
+
+    const { data, error, count } = await rangedQuery(
+      () => dataQuery.range(offset, offset + limit - 1),
+      () => countQuery
+    );
 
     if (error) {
       console.error("Error GET /api/purchases:", error);

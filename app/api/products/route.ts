@@ -623,12 +623,35 @@ export async function POST(request: Request) {
         costError
       );
 
+      /*
+       * El producto SÍ se creó (el insert de arriba ya tuvo éxito):
+       * devolver 400 aquí hacía pensar al cliente que la creación
+       * completa había fallado, arriesgando un reintento que
+       * duplicara el producto. En vez de eso, 201 con un aviso; el
+       * costo real que quedó guardado es el que puso el trigger de
+       * sincronización (0, no el que pidió el usuario), así que se
+       * consulta para no informar un valor que no es el real.
+       */
+      const { data: actualCost } = await supabase
+        .from("product_costs")
+        .select("purchase_price")
+        .eq("product_id", data.id)
+        .maybeSingle();
+
       return NextResponse.json(
         {
-          error:
-            "El producto se creó, pero no se pudo guardar el costo de compra.",
+          ok: true,
+          warning:
+            "El producto se creó, pero no se pudo guardar el costo de compra. Edítalo para intentarlo de nuevo.",
+          message: "Producto guardado correctamente.",
+          product: {
+            ...data,
+            purchase_price: Number(
+              actualCost?.purchase_price ?? 0
+            ),
+          },
         },
-        { status: 400 }
+        { status: 201 }
       );
     }
 

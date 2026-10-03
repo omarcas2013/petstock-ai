@@ -1,6 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 
 type Product = {
@@ -46,8 +51,14 @@ export default function HistorialVentasPage() {
   const [sortOrder, setSortOrder] =
     useState("recent");
 
+  // Descarta una respuesta tardía si el usuario siguió escribiendo o
+  // cambió de página antes de que esta llegara.
+  const latestRequestRef = useRef(0);
+
   const loadSales = useCallback(
     async (nextOffset: number) => {
+      const requestId = ++latestRequestRef.current;
+
       try {
         setLoading(true);
         setError("");
@@ -77,6 +88,10 @@ export default function HistorialVentasPage() {
 
         const result = await response.json();
 
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         if (!response.ok) {
           throw new Error(
             result.error ||
@@ -92,6 +107,10 @@ export default function HistorialVentasPage() {
         );
         setOffset(nextOffset);
       } catch (error) {
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         console.error("ERROR HISTORIAL:", error);
 
         setError(
@@ -103,7 +122,9 @@ export default function HistorialVentasPage() {
         setSales([]);
         setTotal(0);
       } finally {
-        setLoading(false);
+        if (latestRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
     [search, paymentFilter, sortOrder]

@@ -77,6 +77,11 @@ export default function InventarioCargaPage() {
 
   const [message, setMessage] = useState("");
 
+  // 403 de POST /api/inventory/initial-load (solo manager+): esta
+  // página no tiene otra forma de saberlo de antemano, porque
+  // GET /api/products es accesible para cualquier rol.
+  const [accessDenied, setAccessDenied] = useState(false);
+
   const [applying, setApplying] =
     useState(false);
 
@@ -693,10 +698,27 @@ export default function InventarioCargaPage() {
         }
       );
 
+      if (response.status === 403) {
+        setAccessDenied(true);
+        return;
+      }
+
       const result =
         await response.json();
 
-      if (!response.ok) {
+      /*
+       * tanda 3, auditoría de Parte B: si un reintento (red lenta,
+       * doble clic) llega con el mismo request_id que un envío que
+       * SÍ se aplicó, la RPC lo rechaza con este mensaje exacto. Eso
+       * no es un fallo para el usuario: su carga ya quedó aplicada
+       * la primera vez, así que se trata igual que un éxito en vez
+       * de mostrar un error que lo haría reintentar de nuevo.
+       */
+      const isDuplicateRequest =
+        !response.ok &&
+        result.error === "Esta carga ya fue procesada.";
+
+      if (!response.ok && !isDuplicateRequest) {
         const details =
           Array.isArray(
             result.details
@@ -733,8 +755,10 @@ export default function InventarioCargaPage() {
       setSearch("");
 
       setMessage(
-        result.message ||
-          `Inventario actualizado correctamente. ${items.length} producto(s) procesado(s).`
+        isDuplicateRequest
+          ? "Esta carga ya se había aplicado correctamente."
+          : result.message ||
+              `Inventario actualizado correctamente. ${items.length} producto(s) procesado(s).`
       );
 
       await loadProducts();
@@ -752,6 +776,32 @@ export default function InventarioCargaPage() {
     } finally {
       setApplying(false);
     }
+  }
+
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <p className="text-4xl">🔒</p>
+
+          <h1 className="mt-4 text-xl font-bold text-gray-900">
+            No tienes acceso a esta función
+          </h1>
+
+          <p className="mt-2 text-sm text-gray-600">
+            El ajuste masivo de inventario es solo para owner,
+            admin o manager.
+          </p>
+
+          <Link
+            href="/inventario"
+            className="mt-6 inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            Volver al inventario
+          </Link>
+        </div>
+      </main>
+    );
   }
 
   return (

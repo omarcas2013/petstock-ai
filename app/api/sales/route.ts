@@ -1,10 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
-import { escapeLikePattern } from "@/lib/supabase/like";
+import {
+  escapeLikePattern,
+  quoteOrFilterValue,
+} from "@/lib/supabase/like";
+import { rangedQuery } from "@/lib/supabase/paginate";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const SALES_SELECT = `
+  id,
+  store_id,
+  customer_name,
+  payment_method,
+  subtotal,
+  total,
+  created_at,
+  sale_items (
+    id,
+    product_id,
+    quantity,
+    unit_price,
+    subtotal,
+    products (
+      id,
+      name,
+      sku
+    )
+  )
+`;
 
 function parsePageParams(searchParams: URLSearchParams) {
   const limitRaw = Number(searchParams.get("limit"));
@@ -58,59 +87,68 @@ export async function GET(request: NextRequest) {
     // OBTENER VENTAS (paginado en el servidor)
     // ==========================================================
 
-    let query = supabase
+    /*
+     * PostgREST no admite casts (id::text) dentro de un filtro, así
+     * que la búsqueda por ID solo se activa cuando el texto completo
+     * es un UUID válido (comparación exacta); el resto del tiempo
+     * busca por customer_name. El valor del ilike se escapa y se
+     * envuelve en comillas (quoteOrFilterValue) porque va dentro del
+     * string combinado de .or() (confirmado contra la API real que,
+     * sin comillas, una coma o paréntesis en el texto rompe el
+     * parseo con PGRST100).
+     */
+    let orFilter: string | null = null;
+
+    if (search) {
+      const pattern = quoteOrFilterValue(
+        `%${escapeLikePattern(search)}%`
+      );
+
+      const conditions = [`customer_name.ilike.${pattern}`];
+
+      if (UUID_RE.test(search)) {
+        conditions.push(`id.eq.${search}`);
+      }
+
+      orFilter = conditions.join(",");
+    }
+
+    let dataQuery = supabase
       .from("sales")
-      .select(
-        `
-        id,
-        store_id,
-        customer_name,
-        payment_method,
-        subtotal,
-        total,
-        created_at,
-        sale_items (
-          id,
-          product_id,
-          quantity,
-          unit_price,
-          subtotal,
-          products (
-            id,
-            name,
-            sku
-          )
-        )
-      `,
-        { count: "exact" }
-      )
+      .select(SALES_SELECT, { count: "exact" })
+      .eq("store_id", profile.store_id);
+
+    let countQuery = supabase
+      .from("sales")
+      .select("id", { count: "exact", head: true })
       .eq("store_id", profile.store_id);
 
     if (paymentMethod !== "todos") {
-      query = query.eq("payment_method", paymentMethod);
+      dataQuery = dataQuery.eq("payment_method", paymentMethod);
+      countQuery = countQuery.eq("payment_method", paymentMethod);
     }
 
-    if (search) {
-      const escaped = escapeLikePattern(search);
-
-      query = query.or(
-        `customer_name.ilike.%${escaped}%,id::text.ilike.%${escaped}%`
-      );
+    if (orFilter) {
+      dataQuery = dataQuery.or(orFilter);
+      countQuery = countQuery.or(orFilter);
     }
 
     if (sort === "oldest") {
-      query = query.order("created_at", { ascending: true });
+      dataQuery = dataQuery.order("created_at", { ascending: true });
     } else if (sort === "highest") {
-      query = query.order("total", { ascending: false });
+      dataQuery = dataQuery.order("total", { ascending: false });
     } else if (sort === "lowest") {
-      query = query.order("total", { ascending: true });
+      dataQuery = dataQuery.order("total", { ascending: true });
     } else {
-      query = query.order("created_at", { ascending: false });
+      dataQuery = dataQuery.order("created_at", { ascending: false });
     }
 
-    const { data, error, count } = await query
-      .order("id")
-      .range(offset, offset + limit - 1);
+    dataQuery = dataQuery.order("id");
+
+    const { data, error, count } = await rangedQuery(
+      () => dataQuery.range(offset, offset + limit - 1),
+      () => countQuery
+    );
 
     if (error) {
       console.error("Error obteniendo ventas:", error);

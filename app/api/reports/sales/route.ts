@@ -38,6 +38,32 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (desde > hasta) {
+      return NextResponse.json(
+        {
+          error:
+            "La fecha inicial no puede ser posterior a la final.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const rangeDays =
+      (new Date(`${hasta}T00:00:00Z`).getTime() -
+        new Date(`${desde}T00:00:00Z`).getTime()) /
+        86400000 +
+      1;
+
+    if (rangeDays > 366) {
+      return NextResponse.json(
+        {
+          error:
+            "El rango de fechas no puede ser mayor a 366 días.",
+        },
+        { status: 400 }
+      );
+    }
+
     const { data, error } = await supabase.rpc(
       "report_sales_summary",
       {

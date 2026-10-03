@@ -93,16 +93,31 @@ export async function GET(
           "ERROR CONSULTANDO DEVOLUCIONES PREVIAS:",
           returnedError
         );
-      } else {
-        for (const row of returnedRows ?? []) {
-          const current =
-            alreadyReturnedByItem.get(row.sale_item_id) ?? 0;
 
-          alreadyReturnedByItem.set(
-            row.sale_item_id,
-            current + row.quantity
-          );
-        }
+        /*
+         * Si esta consulta falla, no sabemos cuánto ya se devolvió:
+         * asumir 0 dejaría remaining_to_return = quantity (vendido),
+         * reabriendo exactamente el bug que esto corrige. Mejor
+         * fallar la respuesta que dar un máximo de devolución
+         * incorrecto.
+         */
+        return NextResponse.json(
+          {
+            error:
+              "No se pudo verificar cuánto de esta venta ya fue devuelto.",
+          },
+          { status: 500 }
+        );
+      }
+
+      for (const row of returnedRows ?? []) {
+        const current =
+          alreadyReturnedByItem.get(row.sale_item_id) ?? 0;
+
+        alreadyReturnedByItem.set(
+          row.sale_item_id,
+          current + row.quantity
+        );
       }
     }
 

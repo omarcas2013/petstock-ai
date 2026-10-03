@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   getBogotaDateKey,
@@ -54,8 +60,23 @@ export default function ReporteMovimientosPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("todos");
 
+  // Rango que realmente respondió el servidor (puede quedar atrás de
+  // startDate/endDate mientras una carga está en curso o si falló),
+  // para que el encabezado "Período" nunca muestre fechas que el
+  // reporte en pantalla todavía no refleja.
+  const [loadedRange, setLoadedRange] = useState({
+    desde: startDate,
+    hasta: endDate,
+  });
+
+  // Descarta una respuesta tardía si el usuario cambió las fechas
+  // otra vez antes de que esta llegara.
+  const latestRequestRef = useRef(0);
+
   const loadReport = useCallback(
     async (desde: string, hasta: string) => {
+      const requestId = ++latestRequestRef.current;
+
       try {
         setLoading(true);
         setError("");
@@ -70,6 +91,10 @@ export default function ReporteMovimientosPage() {
 
         const result = await response.json();
 
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         if (!response.ok) {
           throw new Error(
             result.error ||
@@ -78,7 +103,12 @@ export default function ReporteMovimientosPage() {
         }
 
         setReport(result.report ?? null);
+        setLoadedRange({ desde, hasta });
       } catch (error) {
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         console.error(
           "ERROR REPORTE MOVIMIENTOS:",
           error
@@ -90,7 +120,9 @@ export default function ReporteMovimientosPage() {
             : "Error cargando el reporte."
         );
       } finally {
-        setLoading(false);
+        if (latestRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
     []
@@ -99,15 +131,13 @@ export default function ReporteMovimientosPage() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadReport(startDate, endDate);
-    }, 0);
+    }, 400);
 
     return () => {
       window.clearTimeout(timer);
     };
-    // Solo al montar: los botones de filtro de fecha disparan su
-    // propia carga (ver setToday/setThisMonth/Actualizar).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [startDate, endDate]);
 
   function formatDate(date: string) {
     return new Intl.DateTimeFormat("es-CO", {
@@ -202,6 +232,44 @@ export default function ReporteMovimientosPage() {
   const hasActiveFilter =
     search.trim() !== "" || typeFilter !== "todos";
 
+  /*
+   * Los totales respetan el filtro por tipo y la búsqueda, igual que
+   * antes de paginar/mover el cálculo al servidor: report_*_summary
+   * siempre trae el período completo, pero la tarjeta de resumen
+   * recalcula sobre filteredMovements (lo que de verdad se está
+   * viendo en la tabla de detalle).
+   */
+  const filteredTotals = useMemo(() => {
+    let entries = 0;
+    let exits = 0;
+    let adjustmentVariance = 0;
+
+    for (const movement of filteredMovements) {
+      const type = movement.movement_type.toLowerCase();
+
+      if (type === "entrada") {
+        entries += Number(movement.quantity || 0);
+      } else if (type === "salida") {
+        exits += Number(movement.quantity || 0);
+      } else if (
+        type === "ajuste" &&
+        movement.stock_before !== null &&
+        movement.stock_after !== null
+      ) {
+        adjustmentVariance +=
+          movement.stock_after - movement.stock_before;
+      }
+    }
+
+    return {
+      count: filteredMovements.length,
+      entries,
+      exits,
+      adjustmentVariance,
+      netChange: entries - exits + adjustmentVariance,
+    };
+  }, [filteredMovements]);
+
   function handlePrint() {
     window.print();
   }
@@ -223,11 +291,11 @@ export default function ReporteMovimientosPage() {
     void loadReport(firstDay, lastDay);
   }
 
-  const totalMovements = report?.movement_count ?? 0;
-  const totalEntries = report?.total_entries ?? 0;
-  const totalExits = report?.total_exits ?? 0;
-  const totalAdjustments = report?.total_adjustment_variance ?? 0;
-  const netChange = report?.net_change ?? 0;
+  const totalMovements = filteredTotals.count;
+  const totalEntries = filteredTotals.entries;
+  const totalExits = filteredTotals.exits;
+  const totalAdjustments = filteredTotals.adjustmentVariance;
+  const netChange = filteredTotals.netChange;
 
   return (
     <>
@@ -318,8 +386,8 @@ export default function ReporteMovimientosPage() {
             </h1>
 
             <p className="mt-2 text-sm text-gray-500">
-              Período: {formatShortDate(startDate)} al{" "}
-              {formatShortDate(endDate)}
+              Período: {formatShortDate(loadedRange.desde)} al{" "}
+              {formatShortDate(loadedRange.hasta)}
             </p>
 
             <p className="mt-1 text-xs text-gray-400">
@@ -474,8 +542,8 @@ export default function ReporteMovimientosPage() {
                 </p>
 
                 <p className="mt-1 text-lg font-semibold text-gray-900">
-                  {formatShortDate(startDate)} al{" "}
-                  {formatShortDate(endDate)}
+                  {formatShortDate(loadedRange.desde)} al{" "}
+                  {formatShortDate(loadedRange.hasta)}
                 </p>
               </div>
 
@@ -522,9 +590,9 @@ export default function ReporteMovimientosPage() {
               </div>
 
               <p className="no-print mb-6 text-xs text-gray-400">
-                Los totales de arriba son del período completo.
-                La búsqueda y el filtro de tipo solo afectan la
-                tabla de detalle.
+                {hasActiveFilter
+                  ? "Los totales de arriba reflejan la búsqueda y el filtro de tipo activos."
+                  : "Los totales de arriba son del período completo."}
               </p>
 
               <section className="print-card rounded-2xl bg-white p-6 shadow-sm">
@@ -657,8 +725,10 @@ export default function ReporteMovimientosPage() {
                             colSpan={3}
                             className="px-4 py-4 text-right font-bold text-gray-900"
                           >
-                            VARIACIÓN NETA DE STOCK (período
-                            completo)
+                            VARIACIÓN NETA DE STOCK
+                            {hasActiveFilter
+                              ? " (filtrado)"
+                              : " (período completo)"}
                           </td>
 
                           <td className="px-4 py-4 text-center font-bold text-gray-900">
@@ -689,8 +759,8 @@ export default function ReporteMovimientosPage() {
                     </p>
 
                     <p className="mt-1 text-sm text-gray-400">
-                      Período: {formatShortDate(startDate)}{" "}
-                      al {formatShortDate(endDate)}
+                      Período: {formatShortDate(loadedRange.desde)}{" "}
+                      al {formatShortDate(loadedRange.hasta)}
                     </p>
                   </div>
 

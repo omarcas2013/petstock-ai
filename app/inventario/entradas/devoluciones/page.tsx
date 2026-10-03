@@ -81,6 +81,13 @@ export default function DevolucionesPage() {
   const [saving, setSaving] = useState(false);
 
   const [search, setSearch] = useState("");
+
+  // Búsqueda de la venta a devolver: /api/sales solo devuelve las 20
+  // más recientes por defecto, así que sin esto una venta más
+  // antigua que esas 20 quedaba inalcanzable desde este selector.
+  const [saleSearch, setSaleSearch] = useState("");
+  const [loadingSales, setLoadingSales] = useState(false);
+
   const [form, setForm] = useState<ReturnForm>({
     saleId: "",
     saleItemId: "",
@@ -132,6 +139,54 @@ export default function DevolucionesPage() {
     }
   }
 
+  // Descarta una respuesta de búsqueda de ventas que llegue tarde
+  // (si el usuario sigue escribiendo, la última petición manda).
+  const latestSaleSearchRef = useRef(0);
+
+  async function loadSales(term: string) {
+    const requestId = ++latestSaleSearchRef.current;
+
+    try {
+      setLoadingSales(true);
+
+      const params = new URLSearchParams();
+
+      params.set("limit", "30");
+
+      if (term.trim()) {
+        params.set("search", term.trim());
+      }
+
+      const response = await fetch(
+        `/api/sales?${params.toString()}`
+      );
+
+      const data = await response.json();
+
+      if (latestSaleSearchRef.current !== requestId) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "No se pudieron buscar las ventas."
+        );
+      }
+
+      setSales(data.sales ?? []);
+    } catch (err) {
+      if (latestSaleSearchRef.current !== requestId) {
+        return;
+      }
+
+      console.error(err);
+    } finally {
+      if (latestSaleSearchRef.current === requestId) {
+        setLoadingSales(false);
+      }
+    }
+  }
+
   // Guarda el id de la venta de la última petición disparada, para
   // poder descartar una respuesta tardía si el usuario ya eligió otra
   // venta antes de que esta llegara (p. ej. clic rápido entre ventas).
@@ -165,9 +220,13 @@ export default function DevolucionesPage() {
 
       setSaleItems(items);
 
-      // Si la venta tiene un solo producto, lo seleccionamos
-      // de una vez para no obligar un clic extra.
-      if (items.length === 1) {
+      // Si la venta tiene un solo producto y todavía queda algo
+      // por devolver, lo seleccionamos de una vez para no obligar
+      // un clic extra.
+      if (
+        items.length === 1 &&
+        (items[0].remaining_to_return ?? items[0].quantity) > 0
+      ) {
         setForm((current) => ({
           ...current,
           saleItemId: items[0].id,
@@ -197,6 +256,20 @@ export default function DevolucionesPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!showForm) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadSales(saleSearch);
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [saleSearch, showForm]);
 
   const filteredReturns = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -248,6 +321,7 @@ export default function DevolucionesPage() {
     setSuccess("");
     setSelectedSale(null);
     setSaleItems([]);
+    setSaleSearch("");
 
     setForm({
       saleId: "",
@@ -743,6 +817,27 @@ export default function DevolucionesPage() {
                   Venta
                 </label>
 
+                <input
+                  type="text"
+                  value={saleSearch}
+                  onChange={(event) =>
+                    setSaleSearch(event.target.value)
+                  }
+                  disabled={saving}
+                  placeholder="Buscar por cliente o ID de venta..."
+                  className="mb-2 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                />
+
+                <p className="mb-2 text-xs text-slate-400">
+                  {loadingSales
+                    ? "Buscando..."
+                    : saleSearch.trim()
+                    ? `${sales.length} resultado${
+                        sales.length === 1 ? "" : "s"
+                      }`
+                    : "Mostrando las ventas más recientes."}
+                </p>
+
                 <select
                   value={form.saleId}
                   onChange={(event) =>
@@ -833,6 +928,13 @@ export default function DevolucionesPage() {
                         const isSelected =
                           form.saleItemId === item.id;
 
+                        const remaining =
+                          item.remaining_to_return ??
+                          item.quantity;
+
+                        const fullyReturned =
+                          remaining <= 0;
+
                         return (
                           <button
                             key={item.id}
@@ -844,10 +946,14 @@ export default function DevolucionesPage() {
                                 quantity: "",
                               }))
                             }
-                            disabled={saving}
+                            disabled={
+                              saving || fullyReturned
+                            }
                             className={`w-full rounded-xl border p-4 text-left transition ${
                               isSelected
                                 ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-100"
+                                : fullyReturned
+                                ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-60"
                                 : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                             }`}
                           >
@@ -863,6 +969,12 @@ export default function DevolucionesPage() {
                                   {item.products?.sku ||
                                     "Sin SKU"}
                                 </p>
+
+                                {fullyReturned && (
+                                  <p className="mt-1 text-xs font-semibold text-amber-700">
+                                    Ya devuelto por completo
+                                  </p>
+                                )}
                               </div>
 
                               <div className="flex gap-6 text-sm">
@@ -873,6 +985,16 @@ export default function DevolucionesPage() {
 
                                   <p className="font-bold text-slate-900">
                                     {item.quantity}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <p className="text-xs text-slate-400">
+                                    Disponible
+                                  </p>
+
+                                  <p className="font-bold text-slate-900">
+                                    {remaining}
                                   </p>
                                 </div>
 

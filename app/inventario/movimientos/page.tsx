@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -62,11 +63,17 @@ export default function MovimientosPage() {
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
 
+  // Descarta una respuesta tardía si el usuario siguió escribiendo o
+  // cambió de página antes de que esta llegara.
+  const latestRequestRef = useRef(0);
+
   /*
    * CARGAR MOVIMIENTOS
    */
   const loadMovements = useCallback(
     async (nextOffset: number) => {
+      const requestId = ++latestRequestRef.current;
+
       try {
         setLoading(true);
         setError("");
@@ -90,6 +97,10 @@ export default function MovimientosPage() {
 
         const result = await response.json();
 
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         if (!response.ok) {
           throw new Error(
             result.error || "Error cargando movimientos"
@@ -102,6 +113,10 @@ export default function MovimientosPage() {
         );
         setOffset(nextOffset);
       } catch (error) {
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         console.error(error);
 
         setError(
@@ -110,7 +125,9 @@ export default function MovimientosPage() {
             : "Error cargando movimientos"
         );
       } finally {
-        setLoading(false);
+        if (latestRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
     [search, typeFilter]

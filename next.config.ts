@@ -22,6 +22,13 @@ const nextConfig: NextConfig = {
         destination: "/proveedores",
         permanent: false,
       },
+      // Duplicado del cargue CSV eliminado (tanda 3, Parte C.3):
+      // /inventario/carga ya cubre esa función.
+      {
+        source: "/inventario/cargue",
+        destination: "/inventario/carga",
+        permanent: false,
+      },
     ];
   },
 };

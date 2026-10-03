@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getBogotaDateKey,
@@ -59,8 +59,22 @@ export default function ReporteVentasPage() {
   const [startDate, setStartDate] = useState(initialToday);
   const [endDate, setEndDate] = useState(initialToday);
 
+  // Rango que realmente respondió el servidor (ver reportes de
+  // movimientos: evita que el encabezado muestre fechas que el
+  // reporte en pantalla todavía no refleja).
+  const [loadedRange, setLoadedRange] = useState({
+    desde: initialToday,
+    hasta: initialToday,
+  });
+
+  // Descarta una respuesta tardía si el usuario cambió las fechas
+  // otra vez antes de que esta llegara.
+  const latestRequestRef = useRef(0);
+
   const loadReport = useCallback(
     async (desde: string, hasta: string) => {
+      const requestId = ++latestRequestRef.current;
+
       try {
         setLoading(true);
         setError("");
@@ -75,6 +89,10 @@ export default function ReporteVentasPage() {
 
         const result = await response.json();
 
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         if (!response.ok) {
           throw new Error(
             result.error || "Error cargando el reporte."
@@ -82,7 +100,12 @@ export default function ReporteVentasPage() {
         }
 
         setReport(result.report ?? null);
+        setLoadedRange({ desde, hasta });
       } catch (error) {
+        if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
         console.error("ERROR REPORTE VENTAS:", error);
 
         setError(
@@ -91,7 +114,9 @@ export default function ReporteVentasPage() {
             : "Error cargando el reporte."
         );
       } finally {
-        setLoading(false);
+        if (latestRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
     []
@@ -100,15 +125,13 @@ export default function ReporteVentasPage() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadReport(startDate, endDate);
-    }, 0);
+    }, 400);
 
     return () => {
       window.clearTimeout(timer);
     };
-    // Solo al montar: los botones de filtro disparan su propia carga
-    // con las fechas que acaban de fijar (ver setToday/setThisMonth).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [startDate, endDate]);
 
   function formatPrice(price: number) {
     return new Intl.NumberFormat("es-CO", {
@@ -268,8 +291,8 @@ export default function ReporteVentasPage() {
             </h1>
 
             <p className="mt-2 text-sm text-gray-500">
-              Período: {formatShortDate(startDate)} al{" "}
-              {formatShortDate(endDate)}
+              Período: {formatShortDate(loadedRange.desde)} al{" "}
+              {formatShortDate(loadedRange.hasta)}
             </p>
 
             <p className="mt-1 text-xs text-gray-400">
@@ -394,8 +417,8 @@ export default function ReporteVentasPage() {
                 </p>
 
                 <p className="mt-1 text-lg font-semibold text-gray-900">
-                  {formatShortDate(startDate)} al{" "}
-                  {formatShortDate(endDate)}
+                  {formatShortDate(loadedRange.desde)} al{" "}
+                  {formatShortDate(loadedRange.hasta)}
                 </p>
               </div>
 
@@ -690,8 +713,8 @@ export default function ReporteVentasPage() {
                     </p>
 
                     <p className="mt-1 text-sm text-gray-400">
-                      Período: {formatShortDate(startDate)}{" "}
-                      al {formatShortDate(endDate)}
+                      Período: {formatShortDate(loadedRange.desde)}{" "}
+                      al {formatShortDate(loadedRange.hasta)}
                     </p>
                   </div>
 

@@ -632,43 +632,59 @@ export async function PUT(
     | GUARDAR COSTO
     |--------------------------------------------------------------------------
     |
-    | Upsert, no update simple: si por lo que sea el producto no tenía
-    | fila en product_costs todavía (productos creados antes del
-    | backfill de la fase A, por ejemplo), esto la crea.
+    | Solo si purchase_price vino en el body: de lo contrario este
+    | upsert reescribiría product_costs en cada edición del producto
+    | (incluso al cambiar solo el nombre), con el riesgo de pisar un
+    | costo que otra persona haya actualizado al mismo tiempo con un
+    | valor que aquí solo es "el que tenía al leer el producto".
+    |
+    | Upsert y no update simple: si por lo que sea el producto no
+    | tenía fila en product_costs todavía (productos creados antes
+    | del backfill de la fase A, por ejemplo), esto la crea.
     |
     */
 
-    const { error: costError } = await supabase
-      .from("product_costs")
-      .upsert(
-        {
-          product_id: id,
-          store_id: profile.store_id,
-          purchase_price: purchasePrice,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "product_id" }
-      );
+    let costWarning: string | null = null;
 
-    if (costError) {
-      console.error(
-        "ERROR GUARDANDO COSTO DEL PRODUCTO:",
-        costError
-      );
+    if (body.purchase_price !== undefined) {
+      const { error: costError } = await supabase
+        .from("product_costs")
+        .upsert(
+          {
+            product_id: id,
+            store_id: profile.store_id,
+            purchase_price: purchasePrice,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "product_id" }
+        );
 
-      return NextResponse.json(
-        {
-          error:
-            "El producto se actualizó, pero no se pudo guardar el costo de compra.",
-        },
-        { status: 400 }
-      );
+      if (costError) {
+        console.error(
+          "ERROR GUARDANDO COSTO DEL PRODUCTO:",
+          costError
+        );
+
+        /*
+         * El producto SÍ se actualizó (el update de arriba ya tuvo
+         * éxito): un 400 aquí haría pensar que la edición completa
+         * falló. Se responde 200 con un aviso en vez de un error.
+         */
+        costWarning =
+          "El producto se actualizó, pero no se pudo guardar el costo de compra. Inténtalo de nuevo.";
+      }
     }
 
     return NextResponse.json({
       ok: true,
+      ...(costWarning ? { warning: costWarning } : {}),
       message: "Producto actualizado correctamente.",
-      product: { ...data, purchase_price: purchasePrice },
+      product: {
+        ...data,
+        purchase_price: costWarning
+          ? current.purchase_price ?? 0
+          : purchasePrice,
+      },
     });
   } catch (error) {
     console.error("ERROR INTERNO:", error);

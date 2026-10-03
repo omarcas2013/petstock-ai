@@ -5,9 +5,49 @@ import {
   requireUser,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import { rangedQuery } from "@/lib/supabase/paginate";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+
+const TRANSFERS_SELECT = `
+  id,
+  store_id,
+  product_id,
+  from_warehouse_id,
+  from_location_id,
+  to_warehouse_id,
+  to_location_id,
+  quantity,
+  reason,
+  created_at,
+  products (
+    id,
+    name,
+    sku,
+    barcode
+  ),
+  from_warehouses:warehouses!inventory_transfers_from_warehouse_id_fkey (
+    id,
+    name,
+    code
+  ),
+  from_locations:locations!inventory_transfers_from_location_id_fkey (
+    id,
+    name,
+    code
+  ),
+  to_warehouses:warehouses!inventory_transfers_to_warehouse_id_fkey (
+    id,
+    name,
+    code
+  ),
+  to_locations:locations!inventory_transfers_to_location_id_fkey (
+    id,
+    name,
+    code
+  )
+`;
 
 function parsePageParams(searchParams: URLSearchParams) {
   const limitRaw = Number(searchParams.get("limit"));
@@ -46,68 +86,43 @@ export async function GET(request: NextRequest) {
     );
     const toLocationId = searchParams.get("to_location_id");
 
-    let query = supabase
+    let dataQuery = supabase
       .from("inventory_transfers")
-      .select(
-        `
-        id,
-        store_id,
-        product_id,
-        from_warehouse_id,
-        from_location_id,
-        to_warehouse_id,
-        to_location_id,
-        quantity,
-        reason,
-        created_at,
-        products (
-          id,
-          name,
-          sku,
-          barcode
-        ),
-        from_warehouses:warehouses!inventory_transfers_from_warehouse_id_fkey (
-          id,
-          name,
-          code
-        ),
-        from_locations:locations!inventory_transfers_from_location_id_fkey (
-          id,
-          name,
-          code
-        ),
-        to_warehouses:warehouses!inventory_transfers_to_warehouse_id_fkey (
-          id,
-          name,
-          code
-        ),
-        to_locations:locations!inventory_transfers_to_location_id_fkey (
-          id,
-          name,
-          code
-        )
-      `,
-        { count: "exact" }
-      )
-      .eq("store_id", profile.store_id)
-      .order("created_at", { ascending: false });
+      .select(TRANSFERS_SELECT, { count: "exact" })
+      .eq("store_id", profile.store_id);
+
+    let countQuery = supabase
+      .from("inventory_transfers")
+      .select("id", { count: "exact", head: true })
+      .eq("store_id", profile.store_id);
 
     if (productId) {
-      query = query.eq("product_id", productId);
+      dataQuery = dataQuery.eq("product_id", productId);
+      countQuery = countQuery.eq("product_id", productId);
     }
 
     if (fromLocationId) {
-      query = query.eq("from_location_id", fromLocationId);
+      dataQuery = dataQuery.eq("from_location_id", fromLocationId);
+      countQuery = countQuery.eq(
+        "from_location_id",
+        fromLocationId
+      );
     }
 
     if (toLocationId) {
-      query = query.eq("to_location_id", toLocationId);
+      dataQuery = dataQuery.eq("to_location_id", toLocationId);
+      countQuery = countQuery.eq("to_location_id", toLocationId);
     }
 
     // Orden estable para paginar.
-    const { data, error, count } = await query
-      .order("id")
-      .range(offset, offset + limit - 1);
+    dataQuery = dataQuery
+      .order("created_at", { ascending: false })
+      .order("id");
+
+    const { data, error, count } = await rangedQuery(
+      () => dataQuery.range(offset, offset + limit - 1),
+      () => countQuery
+    );
 
     if (error) {
       console.error("Error obteniendo traslados:", error);

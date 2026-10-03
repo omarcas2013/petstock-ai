@@ -127,7 +127,11 @@ export default function NuevoProductoPage() {
         return;
       }
 
-      setMessage("✅ Producto guardado correctamente.");
+      setMessage(
+        result.warning
+          ? `⚠️ ${result.warning}`
+          : "✅ Producto guardado correctamente."
+      );
 
       setForm(initialForm);
     } catch (error) {

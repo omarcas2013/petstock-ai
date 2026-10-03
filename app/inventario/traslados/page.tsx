@@ -60,6 +60,23 @@ type Transfer = {
 
 const TRANSFERS_PAGE_SIZE = 20;
 
+/*
+ * No todos los traslados tienen almacén y ubicación resueltos (por
+ * ejemplo, si el almacén o la ubicación fueron borrados). Antes se
+ * mostraba siempre "almacén / ubicación", y con cualquiera de los dos
+ * vacío quedaba "Almacén / " o " / Ubicación" colgando.
+ */
+function formatTransferScope(
+  warehouse: NamedRef,
+  location: NamedRef
+) {
+  if (warehouse?.name && location?.name) {
+    return `${warehouse.name} / ${location.name}`;
+  }
+
+  return warehouse?.name || location?.name || "—";
+}
+
 export default function TrasladosPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -1384,7 +1401,9 @@ export default function TrasladosPage() {
                         <td className="px-5 py-4 text-sm text-gray-600">
                           {new Date(
                             transfer.created_at
-                          ).toLocaleString("es-CO")}
+                          ).toLocaleString("es-CO", {
+                            timeZone: "America/Bogota",
+                          })}
                         </td>
 
                         <td className="px-5 py-4">
@@ -1399,15 +1418,17 @@ export default function TrasladosPage() {
                         </td>
 
                         <td className="px-5 py-4 text-sm text-gray-700">
-                          {transfer.from_warehouses?.name}
-                          {" / "}
-                          {transfer.from_locations?.name}
+                          {formatTransferScope(
+                            transfer.from_warehouses,
+                            transfer.from_locations
+                          )}
                         </td>
 
                         <td className="px-5 py-4 text-sm text-gray-700">
-                          {transfer.to_warehouses?.name}
-                          {" / "}
-                          {transfer.to_locations?.name}
+                          {formatTransferScope(
+                            transfer.to_warehouses,
+                            transfer.to_locations
+                          )}
                         </td>
 
                         <td className="px-5 py-4 text-right font-semibold text-gray-900">
