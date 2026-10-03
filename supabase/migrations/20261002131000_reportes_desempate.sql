@@ -10,6 +10,14 @@
 -- por product_id, para que el orden sea siempre el mismo con los
 -- mismos datos.
 --
+-- CORRECCIÓN DE AUDITORÍA (reproducido: 13 productos con la misma
+-- cantidad y uno con más ingreso quedaba fuera del top 10): el
+-- desempate también tenía que estar en el "order by" del CTE
+-- top_products, no solo en el jsonb_agg — ese "order by" es el que
+-- decide qué 10 filas sobreviven al "limit 10" antes de llegar al
+-- jsonb_agg; ordenarlo solo por quantity dejaba el corte de empates
+-- a discreción del planner.
+--
 -- Mismo signature (uuid, date, date): CREATE OR REPLACE reemplaza la
 -- función en el lugar, sin crear una versión adicional ni requerir
 -- DROP FUNCTION antes.
@@ -94,7 +102,7 @@ begin
     join public.sale_items si on si.sale_id = fs.id
     join public.products p on p.id = si.product_id
     group by p.id, p.name, p.sku
-    order by quantity desc
+    order by quantity desc, revenue desc, p.id
     limit 10
   ),
   sale_rows as (
