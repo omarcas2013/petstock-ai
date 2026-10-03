@@ -1085,6 +1085,13 @@ export default function InventarioPage() {
               🔄 Movimientos
             </Link>
 
+            <Link
+              href="/inventario/carga"
+              className="inline-flex items-center justify-center rounded-lg border border-blue-300 bg-blue-50 px-5 py-3 font-medium text-blue-700 hover:bg-blue-100"
+            >
+              📝 Ajuste masivo
+            </Link>
+
             {canSeePurchases && (
               <Link
                 href="/inventario/entradas/compras"

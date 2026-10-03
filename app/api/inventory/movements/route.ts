@@ -1,13 +1,33 @@
-import { NextResponse } from "next/server";
-import { fetchAllRows } from "@/lib/supabase/fetch-all";
+import { NextRequest, NextResponse } from "next/server";
 import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import { escapeLikePattern } from "@/lib/supabase/like";
 
-export async function GET() {
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
+
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireUser();
 
@@ -17,11 +37,19 @@ export async function GET() {
 
     const { supabase, profile } = auth;
 
-    const { data: movements, error } = await fetchAllRows(
-      (from, to) =>
-        supabase
-          .from("inventory_movements")
-          .select(`
+    const { searchParams } = new URL(request.url);
+
+    const { limit, offset } = parsePageParams(searchParams);
+
+    const search = (searchParams.get("search") ?? "").trim();
+    const typeFilter = (
+      searchParams.get("type") ?? "todos"
+    ).trim();
+
+    let query = supabase
+      .from("inventory_movements")
+      .select(
+        `
         id,
         product_id,
         movement_type,
@@ -35,14 +63,29 @@ export async function GET() {
           sku,
           store_id
         )
-      `)
-          // inventory_movements no tiene store_id:
-          // filtramos por la tienda del producto.
-          .eq("products.store_id", profile.store_id)
-          .order("created_at", { ascending: false })
-          .order("id")
-          .range(from, to)
-    );
+      `,
+        { count: "exact" }
+      )
+      // inventory_movements no tiene store_id:
+      // filtramos por la tienda del producto.
+      .eq("products.store_id", profile.store_id);
+
+    if (typeFilter !== "todos") {
+      query = query.eq("movement_type", typeFilter);
+    }
+
+    if (search) {
+      const escaped = escapeLikePattern(search);
+
+      query = query.or(
+        `reason.ilike.%${escaped}%,products.name.ilike.%${escaped}%,products.sku.ilike.%${escaped}%`
+      );
+    }
+
+    const { data: movements, error, count } = await query
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(offset, offset + limit - 1);
 
     if (error) {
       console.error("Error cargando movimientos:", error);
@@ -55,6 +98,9 @@ export async function GET() {
 
     return NextResponse.json({
       movements: movements ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error(error);

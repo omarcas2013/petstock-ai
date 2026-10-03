@@ -4,6 +4,7 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 const VALID_LOCATION_TYPES = [
   "zona",
@@ -191,6 +192,20 @@ export async function PUT(
           error
         );
 
+        // P0001 = el trigger A7 bloqueó la desactivación porque la
+        // ubicación tiene existencias (quantity > 0) asociadas.
+        if (error?.code === "P0001") {
+          return NextResponse.json(
+            {
+              error: rpcErrorMessage(
+                error,
+                "No se pudo actualizar el estado de la ubicación."
+              ),
+            },
+            { status: 409 }
+          );
+        }
+
         return NextResponse.json(
           {
             error:
@@ -368,6 +383,20 @@ export async function PUT(
           {
             error:
               "Ya existe otra ubicación con ese código dentro de este almacén.",
+          },
+          { status: 409 }
+        );
+      }
+
+      // P0001 = el trigger A7 bloqueó la desactivación porque la
+      // ubicación tiene existencias (quantity > 0) asociadas.
+      if (error?.code === "P0001") {
+        return NextResponse.json(
+          {
+            error: rpcErrorMessage(
+              error,
+              "No se pudo actualizar la ubicación."
+            ),
           },
           { status: 409 }
         );

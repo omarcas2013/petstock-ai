@@ -10,6 +10,18 @@ const nextConfig: NextConfig = {
         destination: "/inventario/traslados",
         permanent: false,
       },
+      // Ruta antigua del escáner (tanda 3, Parte C.2).
+      {
+        source: "/inventory/scanner",
+        destination: "/inventario/escaner",
+        permanent: false,
+      },
+      // Duplicado de /proveedores eliminado (tanda 3, Parte C.3).
+      {
+        source: "/inventario/proveedores",
+        destination: "/proveedores",
+        permanent: false,
+      },
     ];
   },
 };

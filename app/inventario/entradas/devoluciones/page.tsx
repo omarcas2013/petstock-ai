@@ -20,6 +20,11 @@ type SaleItem = {
   unit_price: number;
   subtotal: number;
   created_at: string;
+  // Lo que YA se devolvió (devoluciones "confirmada") y lo que
+  // queda disponible para devolver (tanda 3, Parte B #8): el máximo
+  // es lo que queda, no lo vendido.
+  already_returned?: number;
+  remaining_to_return?: number;
   products:
     | {
         id: string;
@@ -319,12 +324,16 @@ export default function DevolucionesPage() {
       return;
     }
 
-    if (
-      selectedItem &&
-      quantity > selectedItem.quantity
-    ) {
+    const maxReturnable =
+      selectedItem?.remaining_to_return ??
+      selectedItem?.quantity ??
+      0;
+
+    if (selectedItem && quantity > maxReturnable) {
       setError(
-        `La cantidad máxima es ${selectedItem.quantity} unidades.`
+        `La cantidad máxima es ${maxReturnable} unidades (${selectedItem.quantity} vendidas, ${
+          selectedItem.already_returned ?? 0
+        } ya devueltas).`
       );
       return;
     }
@@ -901,9 +910,19 @@ export default function DevolucionesPage() {
                     <p className="mt-1 text-sm text-emerald-700">
                       Máximo disponible para devolver:{" "}
                       <strong>
-                        {selectedItem.quantity}
+                        {selectedItem.remaining_to_return ??
+                          selectedItem.quantity}
                       </strong>{" "}
                       unidades
+                      {(selectedItem.already_returned ?? 0) >
+                        0 && (
+                        <>
+                          {" "}
+                          ({selectedItem.quantity} vendidas,{" "}
+                          {selectedItem.already_returned}{" "}
+                          ya devueltas)
+                        </>
+                      )}
                     </p>
                   </div>
 
@@ -914,7 +933,10 @@ export default function DevolucionesPage() {
                   <input
                     type="number"
                     min="1"
-                    max={selectedItem.quantity}
+                    max={
+                      selectedItem.remaining_to_return ??
+                      selectedItem.quantity
+                    }
                     step="1"
                     value={form.quantity}
                     onChange={(event) =>

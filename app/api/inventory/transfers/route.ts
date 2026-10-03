@@ -1,11 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import {
   INVENTORY_MANAGER_ROLES,
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,6 +38,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
 
+    const { limit, offset } = parsePageParams(searchParams);
+
     const productId = searchParams.get("product_id");
     const fromLocationId = searchParams.get(
       "from_location_id"
@@ -27,7 +48,8 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from("inventory_transfers")
-      .select(`
+      .select(
+        `
         id,
         store_id,
         product_id,
@@ -64,7 +86,9 @@ export async function GET(request: NextRequest) {
           name,
           code
         )
-      `)
+      `,
+        { count: "exact" }
+      )
       .eq("store_id", profile.store_id)
       .order("created_at", { ascending: false });
 
@@ -81,11 +105,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Orden estable para paginar.
-    query = query.order("id");
-
-    const { data, error } = await fetchAllRows((from, to) =>
-      query.range(from, to)
-    );
+    const { data, error, count } = await query
+      .order("id")
+      .range(offset, offset + limit - 1);
 
     if (error) {
       console.error("Error obteniendo traslados:", error);
@@ -98,6 +120,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       transfers: data ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error(

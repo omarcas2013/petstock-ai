@@ -1,21 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  bogotaEndOfDay,
-  bogotaStartOfDay,
   getBogotaDateKey,
   getBogotaMonthStartKey,
 } from "@/lib/dates";
 
-type Product = {
-  id: string;
-  name: string;
-  sku: string | null;
-};
-
-type Movement = {
+type MovementRow = {
   id: string;
   product_id: string;
   movement_type: string;
@@ -24,7 +16,17 @@ type Movement = {
   stock_before: number | null;
   stock_after: number | null;
   created_at: string;
-  products?: Product | null;
+  product_name: string | null;
+  product_sku: string | null;
+};
+
+type MovementsReport = {
+  total_entries: number;
+  total_exits: number;
+  total_adjustment_variance: number;
+  net_change: number;
+  movement_count: number;
+  movements: MovementRow[];
 };
 
 // "Hoy" en Bogotá, no en la zona del navegador.
@@ -35,7 +37,9 @@ function getTodayString() {
 export default function ReporteMovimientosPage() {
   const router = useRouter();
 
-  const [movements, setMovements] = useState<Movement[]>([]);
+  const [report, setReport] = useState<MovementsReport | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -50,64 +54,67 @@ export default function ReporteMovimientosPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("todos");
 
+  const loadReport = useCallback(
+    async (desde: string, hasta: string) => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await fetch(
+          `/api/reports/movements?desde=${desde}&hasta=${hasta}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              "Error cargando los movimientos."
+          );
+        }
+
+        setReport(result.report ?? null);
+      } catch (error) {
+        console.error(
+          "ERROR REPORTE MOVIMIENTOS:",
+          error
+        );
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Error cargando el reporte."
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
   useEffect(() => {
-    loadMovements();
+    const timer = window.setTimeout(() => {
+      void loadReport(startDate, endDate);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+    // Solo al montar: los botones de filtro de fecha disparan su
+    // propia carga (ver setToday/setThisMonth/Actualizar).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadMovements() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response = await fetch(
-        "/api/inventory/movements",
-        {
-          method: "GET",
-          cache: "no-store",
-        }
-      );
-
-      const result =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-            "Error cargando los movimientos."
-        );
-      }
-
-      setMovements(
-        Array.isArray(result.movements)
-          ? result.movements
-          : []
-      );
-    } catch (error) {
-      console.error(
-        "ERROR REPORTE MOVIMIENTOS:",
-        error
-      );
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Error cargando el reporte."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function formatDate(date: string) {
-    return new Intl.DateTimeFormat(
-      "es-CO",
-      {
-        dateStyle: "medium",
-        timeStyle: "short",
-        timeZone:
-          "America/Bogota",
-      }
-    ).format(new Date(date));
+    return new Intl.DateTimeFormat("es-CO", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "America/Bogota",
+    }).format(new Date(date));
   }
 
   function formatShortDate(date: string) {
@@ -115,29 +122,17 @@ export default function ReporteMovimientosPage() {
       return "";
     }
 
-    const [
-      year,
-      month,
-      day,
-    ] = date.split("-");
+    const [year, month, day] = date.split("-");
 
-    if (
-      !year ||
-      !month ||
-      !day
-    ) {
+    if (!year || !month || !day) {
       return date;
     }
 
     return `${day}/${month}/${year}`;
   }
 
-  function movementLabel(
-    movementType: string
-  ) {
-    switch (
-      movementType.toLowerCase()
-    ) {
+  function movementLabel(movementType: string) {
+    switch (movementType.toLowerCase()) {
       case "entrada":
         return "Entrada";
 
@@ -152,12 +147,8 @@ export default function ReporteMovimientosPage() {
     }
   }
 
-  function movementClass(
-    movementType: string
-  ) {
-    switch (
-      movementType.toLowerCase()
-    ) {
+  function movementClass(movementType: string) {
+    switch (movementType.toLowerCase()) {
       case "entrada":
         return "bg-green-100 text-green-700";
 
@@ -172,178 +163,71 @@ export default function ReporteMovimientosPage() {
     }
   }
 
-  const filteredMovements =
-    useMemo(() => {
-      const text = search
-        .trim()
-        .toLowerCase();
-
-      const result =
-        movements.filter(
-          (movement) => {
-            const movementDate =
-              new Date(
-                movement.created_at
-              );
-
-            let matchesDate = true;
-
-            if (
-              startDate &&
-              endDate
-            ) {
-              const start =
-                new Date(
-                  bogotaStartOfDay(startDate)
-                );
-
-              const end =
-                new Date(
-                  bogotaEndOfDay(endDate)
-                );
-
-              matchesDate =
-                movementDate >=
-                  start &&
-                movementDate <=
-                  end;
-            }
-
-            const productName =
-              movement.products?.name?.toLowerCase() ||
-              "";
-
-            const sku =
-              movement.products?.sku?.toLowerCase() ||
-              "";
-
-            const reason =
-              movement.reason
-                ?.toLowerCase() || "";
-
-            const matchesSearch =
-              text === "" ||
-              productName.includes(
-                text
-              ) ||
-              sku.includes(text) ||
-              reason.includes(text);
-
-            const matchesType =
-              typeFilter === "todos" ||
-              movement.movement_type.toLowerCase() ===
-                typeFilter;
-
-            return (
-              matchesDate &&
-              matchesSearch &&
-              matchesType
-            );
-          }
-        );
-
-      return result.sort(
-        (a, b) =>
-          new Date(
-            b.created_at
-          ).getTime() -
-          new Date(
-            a.created_at
-          ).getTime()
-      );
-    }, [
-      movements,
-      startDate,
-      endDate,
-      search,
-      typeFilter,
-    ]);
-
-  const totalMovements =
-    filteredMovements.length;
-
-  const totalEntries =
-    filteredMovements
-      .filter(
-        (movement) =>
-          movement.movement_type.toLowerCase() ===
-          "entrada"
-      )
-      .reduce(
-        (sum, movement) =>
-          sum +
-          Number(
-            movement.quantity || 0
-          ),
-        0
-      );
-
-  const totalExits =
-    filteredMovements
-      .filter(
-        (movement) =>
-          movement.movement_type.toLowerCase() ===
-          "salida"
-      )
-      .reduce(
-        (sum, movement) =>
-          sum +
-          Number(
-            movement.quantity || 0
-          ),
-        0
-      );
-
-  /*
-   * En un ajuste, quantity es el stock final,
-   * no las unidades movidas. La variación real es
-   * stock_after - stock_before.
-   */
-  const totalAdjustments =
-    filteredMovements
-      .filter(
-        (movement) =>
-          movement.movement_type.toLowerCase() ===
-            "ajuste" &&
-          movement.stock_before !== null &&
-          movement.stock_after !== null
-      )
-      .reduce(
-        (sum, movement) =>
-          sum +
-          Number(movement.stock_after) -
-          Number(movement.stock_before),
-        0
-      );
-
-  const netChange =
-    totalEntries -
-    totalExits +
-    totalAdjustments;
-
   function formatSigned(value: number) {
     return value > 0 ? `+${value}` : String(value);
   }
+
+  /*
+   * search y typeFilter solo exploran el detalle del período ya
+   * cargado: los totales de arriba (del servidor) siempre son del
+   * período completo, para no tener que repetir en el navegador la
+   * misma agregación que ya hace report_movements_summary.
+   */
+  const filteredMovements = useMemo(() => {
+    const text = search.trim().toLowerCase();
+    const movements = report?.movements ?? [];
+
+    return movements.filter((movement) => {
+      const productName =
+        movement.product_name?.toLowerCase() || "";
+
+      const sku = movement.product_sku?.toLowerCase() || "";
+
+      const reason = movement.reason?.toLowerCase() || "";
+
+      const matchesSearch =
+        text === "" ||
+        productName.includes(text) ||
+        sku.includes(text) ||
+        reason.includes(text);
+
+      const matchesType =
+        typeFilter === "todos" ||
+        movement.movement_type.toLowerCase() === typeFilter;
+
+      return matchesSearch && matchesType;
+    });
+  }, [report, search, typeFilter]);
+
+  const hasActiveFilter =
+    search.trim() !== "" || typeFilter !== "todos";
 
   function handlePrint() {
     window.print();
   }
 
   function setToday() {
-    const today =
-      getTodayString();
+    const today = getTodayString();
 
     setStartDate(today);
     setEndDate(today);
+    void loadReport(today, today);
   }
 
   function setThisMonth() {
-    setStartDate(
-      getBogotaMonthStartKey()
-    );
+    const firstDay = getBogotaMonthStartKey();
+    const lastDay = getTodayString();
 
-    setEndDate(getTodayString());
+    setStartDate(firstDay);
+    setEndDate(lastDay);
+    void loadReport(firstDay, lastDay);
   }
+
+  const totalMovements = report?.movement_count ?? 0;
+  const totalEntries = report?.total_entries ?? 0;
+  const totalExits = report?.total_exits ?? 0;
+  const totalAdjustments = report?.total_adjustment_variance ?? 0;
+  const netChange = report?.net_change ?? 0;
 
   return (
     <>
@@ -400,16 +284,15 @@ export default function ReporteMovimientosPage() {
               </h1>
 
               <p className="mt-2 text-gray-600">
-                Consulta las entradas, salidas y ajustes del inventario.
+                Consulta las entradas, salidas y ajustes del
+                inventario.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() =>
-                  router.push("/")
-                }
+                onClick={() => router.push("/")}
                 className="rounded-lg border border-gray-300 bg-white px-5 py-3 font-medium text-gray-700 hover:bg-gray-50"
               >
                 Dashboard
@@ -435,27 +318,17 @@ export default function ReporteMovimientosPage() {
             </h1>
 
             <p className="mt-2 text-sm text-gray-500">
-              Período:{" "}
-              {formatShortDate(
-                startDate
-              )}{" "}
-              al{" "}
-              {formatShortDate(
-                endDate
-              )}
+              Período: {formatShortDate(startDate)} al{" "}
+              {formatShortDate(endDate)}
             </p>
 
             <p className="mt-1 text-xs text-gray-400">
               Generado el{" "}
-              {new Intl.DateTimeFormat(
-                "es-CO",
-                {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                  timeZone:
-                    "America/Bogota",
-                }
-              ).format(new Date())}
+              {new Intl.DateTimeFormat("es-CO", {
+                dateStyle: "medium",
+                timeStyle: "short",
+                timeZone: "America/Bogota",
+              }).format(new Date())}
             </p>
           </div>
 
@@ -470,9 +343,7 @@ export default function ReporteMovimientosPage() {
                   type="date"
                   value={startDate}
                   onChange={(event) =>
-                    setStartDate(
-                      event.target.value
-                    )
+                    setStartDate(event.target.value)
                   }
                   className="mt-2 w-full rounded-lg border border-gray-300 p-3"
                 />
@@ -487,9 +358,7 @@ export default function ReporteMovimientosPage() {
                   type="date"
                   value={endDate}
                   onChange={(event) =>
-                    setEndDate(
-                      event.target.value
-                    )
+                    setEndDate(event.target.value)
                   }
                   className="mt-2 w-full rounded-lg border border-gray-300 p-3"
                 />
@@ -503,43 +372,28 @@ export default function ReporteMovimientosPage() {
                 <select
                   value={typeFilter}
                   onChange={(event) =>
-                    setTypeFilter(
-                      event.target.value
-                    )
+                    setTypeFilter(event.target.value)
                   }
                   className="mt-2 w-full rounded-lg border border-gray-300 p-3"
                 >
-                  <option value="todos">
-                    Todos
-                  </option>
-
-                  <option value="entrada">
-                    Entradas
-                  </option>
-
-                  <option value="salida">
-                    Salidas
-                  </option>
-
-                  <option value="ajuste">
-                    Ajustes
-                  </option>
+                  <option value="todos">Todos</option>
+                  <option value="entrada">Entradas</option>
+                  <option value="salida">Salidas</option>
+                  <option value="ajuste">Ajustes</option>
                 </select>
               </div>
             </div>
 
             <div className="mt-4">
               <label className="text-sm font-medium text-gray-700">
-                Buscar
+                Buscar en el detalle
               </label>
 
               <input
                 type="text"
                 value={search}
                 onChange={(event) =>
-                  setSearch(
-                    event.target.value
-                  )
+                  setSearch(event.target.value)
                 }
                 placeholder="Producto, SKU o motivo..."
                 className="mt-2 w-full rounded-lg border border-gray-300 p-3"
@@ -565,7 +419,9 @@ export default function ReporteMovimientosPage() {
 
               <button
                 type="button"
-                onClick={loadMovements}
+                onClick={() =>
+                  void loadReport(startDate, endDate)
+                }
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Actualizar
@@ -590,13 +446,13 @@ export default function ReporteMovimientosPage() {
                 Error cargando movimientos
               </p>
 
-              <p className="mt-1 text-sm">
-                {error}
-              </p>
+              <p className="mt-1 text-sm">{error}</p>
 
               <button
                 type="button"
-                onClick={loadMovements}
+                onClick={() =>
+                  void loadReport(startDate, endDate)
+                }
                 className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white"
               >
                 Reintentar
@@ -618,17 +474,12 @@ export default function ReporteMovimientosPage() {
                 </p>
 
                 <p className="mt-1 text-lg font-semibold text-gray-900">
-                  {formatShortDate(
-                    startDate
-                  )}{" "}
-                  al{" "}
-                  {formatShortDate(
-                    endDate
-                  )}
+                  {formatShortDate(startDate)} al{" "}
+                  {formatShortDate(endDate)}
                 </p>
               </div>
 
-              <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mb-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="print-break rounded-2xl bg-white p-6 shadow-sm">
                   <p className="text-sm text-gray-500">
                     Movimientos
@@ -670,6 +521,12 @@ export default function ReporteMovimientosPage() {
                 </div>
               </div>
 
+              <p className="no-print mb-6 text-xs text-gray-400">
+                Los totales de arriba son del período completo.
+                La búsqueda y el filtro de tipo solo afectan la
+                tabla de detalle.
+              </p>
+
               <section className="print-card rounded-2xl bg-white p-6 shadow-sm">
                 <div className="mb-5">
                   <h2 className="text-xl font-bold text-gray-900">
@@ -677,12 +534,15 @@ export default function ReporteMovimientosPage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-gray-500">
-                    Historial de movimientos registrados en el período.
+                    Historial de movimientos registrados en el
+                    período
+                    {hasActiveFilter
+                      ? ", filtrado por el buscador y/o el tipo."
+                      : "."}
                   </p>
                 </div>
 
-                {filteredMovements.length ===
-                0 ? (
+                {filteredMovements.length === 0 ? (
                   <div className="rounded-xl bg-gray-50 p-10 text-center">
                     <p className="font-medium text-gray-700">
                       No encontramos movimientos.
@@ -728,87 +588,67 @@ export default function ReporteMovimientosPage() {
                       </thead>
 
                       <tbody className="divide-y">
-                        {filteredMovements.map(
-                          (movement) => {
-                            const quantity =
-                              Number(
-                                movement.quantity ||
-                                  0
-                              );
+                        {filteredMovements.map((movement) => (
+                          <tr
+                            key={movement.id}
+                            className="hover:bg-gray-50"
+                          >
+                            <td className="px-4 py-3">
+                              <p className="text-sm font-medium text-gray-900">
+                                {formatDate(
+                                  movement.created_at
+                                )}
+                              </p>
 
-                            return (
-                              <tr
-                                key={
-                                  movement.id
-                                }
-                                className="hover:bg-gray-50"
+                              <p className="mt-1 font-mono text-xs text-gray-400">
+                                {movement.id.slice(0, 8)}...
+                              </p>
+                            </td>
+
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-gray-900">
+                                {movement.product_name ||
+                                  "Producto"}
+                              </p>
+
+                              {movement.product_sku && (
+                                <p className="mt-1 font-mono text-xs text-gray-400">
+                                  {movement.product_sku}
+                                </p>
+                              )}
+                            </td>
+
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${movementClass(
+                                  movement.movement_type
+                                )}`}
                               >
-                                <td className="px-4 py-3">
-                                  <p className="text-sm font-medium text-gray-900">
-                                    {formatDate(
-                                      movement.created_at
-                                    )}
-                                  </p>
+                                {movementLabel(
+                                  movement.movement_type
+                                )}
+                              </span>
+                            </td>
 
-                                  <p className="mt-1 font-mono text-xs text-gray-400">
-                                    {movement.id.slice(
-                                      0,
-                                      8
-                                    )}
-                                    ...
-                                  </p>
-                                </td>
+                            <td className="px-4 py-3 text-center font-bold text-gray-900">
+                              {Number(
+                                movement.quantity || 0
+                              )}
+                            </td>
 
-                                <td className="px-4 py-3">
-                                  <p className="font-medium text-gray-900">
-                                    {movement.products?.name ||
-                                      "Producto"}
-                                  </p>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {movement.reason || "—"}
+                            </td>
 
-                                  {movement.products?.sku && (
-                                    <p className="mt-1 font-mono text-xs text-gray-400">
-                                      {
-                                        movement.products
-                                          .sku
-                                      }
-                                    </p>
-                                  )}
-                                </td>
+                            <td className="px-4 py-3 text-center font-medium text-gray-700">
+                              {movement.stock_before ?? "—"}
+                            </td>
 
-                                <td className="px-4 py-3">
-                                  <span
-                                    className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${movementClass(
-                                      movement.movement_type
-                                    )}`}
-                                  >
-                                    {movementLabel(
-                                      movement.movement_type
-                                    )}
-                                  </span>
-                                </td>
-
-                                <td className="px-4 py-3 text-center font-bold text-gray-900">
-                                  {quantity}
-                                </td>
-
-                                <td className="px-4 py-3 text-sm text-gray-700">
-                                  {movement.reason ||
-                                    "—"}
-                                </td>
-
-                                <td className="px-4 py-3 text-center font-medium text-gray-700">
-                                  {movement.stock_before ??
-                                    "—"}
-                                </td>
-
-                                <td className="px-4 py-3 text-center font-bold text-gray-900">
-                                  {movement.stock_after ??
-                                    "—"}
-                                </td>
-                              </tr>
-                            );
-                          }
-                        )}
+                            <td className="px-4 py-3 text-center font-bold text-gray-900">
+                              {movement.stock_after ?? "—"}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
 
                       <tfoot className="border-t-2 border-gray-300">
@@ -817,7 +657,8 @@ export default function ReporteMovimientosPage() {
                             colSpan={3}
                             className="px-4 py-4 text-right font-bold text-gray-900"
                           >
-                            VARIACIÓN NETA DE STOCK
+                            VARIACIÓN NETA DE STOCK (período
+                            completo)
                           </td>
 
                           <td className="px-4 py-4 text-center font-bold text-gray-900">
@@ -848,14 +689,8 @@ export default function ReporteMovimientosPage() {
                     </p>
 
                     <p className="mt-1 text-sm text-gray-400">
-                      Período:{" "}
-                      {formatShortDate(
-                        startDate
-                      )}{" "}
-                      al{" "}
-                      {formatShortDate(
-                        endDate
-                      )}
+                      Período: {formatShortDate(startDate)}{" "}
+                      al {formatShortDate(endDate)}
                     </p>
                   </div>
 

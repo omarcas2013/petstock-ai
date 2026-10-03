@@ -90,6 +90,10 @@ type Purchase = {
 
 export default function RecepcionesPage() {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+
+  // 403 de GET /api/purchases: la página no se usa ni se muestra
+  // vacía, se reemplaza por un aviso de acceso.
+  const [accessDenied, setAccessDenied] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -136,6 +140,11 @@ export default function RecepcionesPage() {
         fetch("/api/inventory/branches"),
         fetch("/api/inventory/warehouses"),
       ]);
+
+      if (purchasesResponse.status === 403) {
+        setAccessDenied(true);
+        return;
+      }
 
       if (!purchasesResponse.ok) {
         const data = await purchasesResponse
@@ -648,6 +657,31 @@ export default function RecepcionesPage() {
       location.warehouse_id ===
       selectedWarehouseId
   );
+
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <p className="text-4xl">🔒</p>
+
+          <h1 className="mt-4 text-xl font-bold text-slate-900">
+            No tienes acceso a Compras
+          </h1>
+
+          <p className="mt-2 text-sm text-slate-600">
+            Esta sección es solo para owner, admin o manager.
+          </p>
+
+          <Link
+            href="/inventario"
+            className="mt-6 inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Volver al inventario
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">

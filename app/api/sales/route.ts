@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchAllRows } from "@/lib/supabase/fetch-all";
 import { requireRole, SALES_ROLES } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
+import { escapeLikePattern } from "@/lib/supabase/like";
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
 
 type SaleItemInput = {
   product_id: string;
@@ -14,7 +34,7 @@ type CreateSaleBody = {
   customer_name?: string | null;
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireRole(SALES_ROLES);
 
@@ -24,15 +44,24 @@ export async function GET() {
 
     const { supabase, profile } = auth;
 
+    const { searchParams } = new URL(request.url);
+
+    const { limit, offset } = parsePageParams(searchParams);
+
+    const search = (searchParams.get("search") ?? "").trim();
+    const paymentMethod = (
+      searchParams.get("payment_method") ?? "todos"
+    ).trim();
+    const sort = searchParams.get("sort") ?? "recent";
+
     // ==========================================================
-    // OBTENER VENTAS
+    // OBTENER VENTAS (paginado en el servidor)
     // ==========================================================
 
-    const { data, error } = await fetchAllRows((from, to) =>
-      supabase
-        .from("sales")
-        .select(
-          `
+    let query = supabase
+      .from("sales")
+      .select(
+        `
         id,
         store_id,
         customer_name,
@@ -52,13 +81,36 @@ export async function GET() {
             sku
           )
         )
-      `
-        )
-        .eq("store_id", profile.store_id)
-        .order("created_at", { ascending: false })
-        .order("id")
-        .range(from, to)
-    );
+      `,
+        { count: "exact" }
+      )
+      .eq("store_id", profile.store_id);
+
+    if (paymentMethod !== "todos") {
+      query = query.eq("payment_method", paymentMethod);
+    }
+
+    if (search) {
+      const escaped = escapeLikePattern(search);
+
+      query = query.or(
+        `customer_name.ilike.%${escaped}%,id::text.ilike.%${escaped}%`
+      );
+    }
+
+    if (sort === "oldest") {
+      query = query.order("created_at", { ascending: true });
+    } else if (sort === "highest") {
+      query = query.order("total", { ascending: false });
+    } else if (sort === "lowest") {
+      query = query.order("total", { ascending: true });
+    } else {
+      query = query.order("created_at", { ascending: false });
+    }
+
+    const { data, error, count } = await query
+      .order("id")
+      .range(offset, offset + limit - 1);
 
     if (error) {
       console.error("Error obteniendo ventas:", error);
@@ -71,6 +123,9 @@ export async function GET() {
 
     return NextResponse.json({
       sales: data ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error("Error GET /api/sales:", error);

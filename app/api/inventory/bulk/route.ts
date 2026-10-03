@@ -19,7 +19,11 @@ type BulkRequest = {
   items: BulkItem[];
   movement_type?: "entrada" | "ajuste";
   reason?: string | null;
+  request_id?: string | null;
 };
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request) {
   try {
@@ -75,6 +79,24 @@ export async function POST(request: Request) {
       typeof body.reason === "string"
         ? body.reason.trim() || null
         : null;
+
+    /*
+     * request_id (tanda 3, A3): opcional, igual que en
+     * register_bulk_inventory. Si el cliente lo manda, debe ser un
+     * UUID; si lo repite, la RPC rechaza la carga sin aplicar nada
+     * ("Esta carga ya fue procesada.").
+     */
+    const requestId =
+      typeof body.request_id === "string" && body.request_id
+        ? body.request_id
+        : null;
+
+    if (requestId !== null && !UUID_RE.test(requestId)) {
+      return NextResponse.json(
+        { error: "request_id debe ser un UUID." },
+        { status: 400 }
+      );
+    }
 
     /*
      * ============================================================
@@ -430,6 +452,7 @@ export async function POST(request: Request) {
         p_items: rpcItems,
         p_movement_type: movementType,
         p_reason: globalReason,
+        p_request_id: requestId,
       });
 
     if (rpcError) {

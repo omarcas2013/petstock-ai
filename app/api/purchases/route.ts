@@ -6,7 +6,27 @@ import {
 } from "@/lib/auth/require-role";
 import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
-export async function GET() {
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+function parsePageParams(searchParams: URLSearchParams) {
+  const limitRaw = Number(searchParams.get("limit"));
+  const offsetRaw = Number(searchParams.get("offset"));
+
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0
+      ? Math.trunc(offsetRaw)
+      : 0;
+
+  return { limit, offset };
+}
+
+export async function GET(request: NextRequest) {
   try {
     /*
      * La matriz de roles no le da "compras y recepciones" a employee.
@@ -22,9 +42,14 @@ export async function GET() {
 
     const { supabase, profile } = auth;
 
-    const { data, error } = await supabase
+    const { searchParams } = new URL(request.url);
+
+    const { limit, offset } = parsePageParams(searchParams);
+
+    const { data, error, count } = await supabase
       .from("purchases")
-      .select(`
+      .select(
+        `
         id,
         document_number,
         purchase_date,
@@ -80,9 +105,13 @@ export async function GET() {
             code
           )
         )
-      `)
+      `,
+        { count: "exact" }
+      )
       .eq("store_id", profile.store_id)
-      .order("purchase_date", { ascending: false });
+      .order("purchase_date", { ascending: false })
+      .order("id")
+      .range(offset, offset + limit - 1);
 
     if (error) {
       console.error("Error GET /api/purchases:", error);
@@ -95,6 +124,9 @@ export async function GET() {
 
     return NextResponse.json({
       purchases: data ?? [],
+      total: count ?? 0,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error("Error GET /api/purchases:", error);

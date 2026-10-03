@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useMemo, useRef, useState } from "react";
 
 type Product = {
   id: string;
@@ -63,6 +63,11 @@ export default function InventarioCargaPage() {
 
   const [previewRows, setPreviewRows] =
     useState<PreviewRow[]>([]);
+
+  // Un id por cada vista previa (no por cada clic en "Aplicar"): si el
+  // usuario reintenta tras un error de red sobre la MISMA vista
+  // previa, se reutiliza; si carga datos nuevos, se genera uno nuevo.
+  const requestIdRef = useRef<string | null>(null);
 
   const [previewOpen, setPreviewOpen] =
     useState(false);
@@ -291,6 +296,7 @@ export default function InventarioCargaPage() {
     const rows =
       validateManualRows();
 
+    requestIdRef.current = crypto.randomUUID();
     setPreviewRows(rows);
     setPreviewOpen(true);
   }
@@ -581,6 +587,7 @@ export default function InventarioCargaPage() {
         };
       });
 
+    requestIdRef.current = crypto.randomUUID();
     setPreviewRows(rows);
     setPreviewOpen(true);
   }
@@ -678,6 +685,10 @@ export default function InventarioCargaPage() {
 
           body: JSON.stringify({
             items,
+            request_id:
+              requestIdRef.current ??
+              (requestIdRef.current =
+                crypto.randomUUID()),
           }),
         }
       );
@@ -712,6 +723,8 @@ export default function InventarioCargaPage() {
       setReasons({});
 
       setPreviewRows([]);
+
+      requestIdRef.current = null;
 
       setImportRows([]);
 

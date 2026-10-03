@@ -34,8 +34,12 @@ type Product = {
   stock: number;
 };
 
+const PAGE_SIZE = 20;
+
 export default function MovimientosPage() {
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [products, setProducts] = useState<Product[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -61,34 +65,56 @@ export default function MovimientosPage() {
   /*
    * CARGAR MOVIMIENTOS
    */
-  const loadMovements = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
+  const loadMovements = useCallback(
+    async (nextOffset: number) => {
+      try {
+        setLoading(true);
+        setError("");
 
-      const response = await fetch("/api/inventory/movements");
+        const params = new URLSearchParams();
 
-      const result = await response.json();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(nextOffset));
 
-      if (!response.ok) {
-        throw new Error(
-          result.error || "Error cargando movimientos"
+        if (search.trim()) {
+          params.set("search", search.trim());
+        }
+
+        if (typeFilter !== "todos") {
+          params.set("type", typeFilter);
+        }
+
+        const response = await fetch(
+          `/api/inventory/movements?${params.toString()}`
         );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Error cargando movimientos"
+          );
+        }
+
+        setMovements(result.movements || []);
+        setTotal(
+          typeof result.total === "number" ? result.total : 0
+        );
+        setOffset(nextOffset);
+      } catch (error) {
+        console.error(error);
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Error cargando movimientos"
+        );
+      } finally {
+        setLoading(false);
       }
-
-      setMovements(result.movements || []);
-    } catch (error) {
-      console.error(error);
-
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Error cargando movimientos"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [search, typeFilter]
+  );
 
   /*
    * CARGAR PRODUCTOS
@@ -126,16 +152,24 @@ export default function MovimientosPage() {
    */
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void Promise.all([
-        loadMovements(),
-        loadProducts(),
-      ]);
+      void loadProducts();
     }, 0);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [loadMovements, loadProducts]);
+  }, [loadProducts]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadMovements(0);
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, typeFilter]);
 
   /*
    * PRODUCTO SELECCIONADO
@@ -145,61 +179,24 @@ export default function MovimientosPage() {
   );
 
   /*
-   * FILTRAR MOVIMIENTOS
-   */
-  const filteredMovements = useMemo(() => {
-    const searchText = search.trim().toLowerCase();
-
-    return movements.filter((movement) => {
-      const matchesType =
-        typeFilter === "todos" ||
-        movement.movement_type === typeFilter;
-
-      if (!matchesType) {
-        return false;
-      }
-
-      if (!searchText) {
-        return true;
-      }
-
-      const productName =
-        movement.products?.name?.toLowerCase() || "";
-
-      const sku =
-        movement.products?.sku?.toLowerCase() || "";
-
-      const movementReason =
-        movement.reason?.toLowerCase() || "";
-
-      return (
-        productName.includes(searchText) ||
-        sku.includes(searchText) ||
-        movementReason.includes(searchText)
-      );
-    });
-  }, [movements, search, typeFilter]);
-
-  /*
-   * CONTADORES
+   * CONTADORES (de la página actual)
    */
   const movementCounts = useMemo(() => {
     return {
-      total: filteredMovements.length,
-      entradas: filteredMovements.filter(
+      entradas: movements.filter(
         (movement) =>
           movement.movement_type === "entrada"
       ).length,
-      salidas: filteredMovements.filter(
+      salidas: movements.filter(
         (movement) =>
           movement.movement_type === "salida"
       ).length,
-      ajustes: filteredMovements.filter(
+      ajustes: movements.filter(
         (movement) =>
           movement.movement_type === "ajuste"
       ).length,
     };
-  }, [filteredMovements]);
+  }, [movements]);
 
   /*
    * FORMATEAR FECHA
@@ -398,7 +395,7 @@ export default function MovimientosPage() {
       resetForm();
 
       await Promise.all([
-        loadMovements(),
+        loadMovements(0),
         loadProducts(),
       ]);
     } catch (error) {
@@ -413,6 +410,9 @@ export default function MovimientosPage() {
       setSaving(false);
     }
   }
+
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -469,17 +469,17 @@ export default function MovimientosPage() {
         <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm font-medium text-slate-500">
-              Movimientos
+              Movimientos encontrados
             </p>
 
             <p className="mt-2 text-3xl font-bold text-slate-900">
-              {movementCounts.total}
+              {total}
             </p>
           </div>
 
           <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-green-700">
-              Entradas
+              Entradas (página actual)
             </p>
 
             <p className="mt-2 text-3xl font-bold text-green-800">
@@ -489,7 +489,7 @@ export default function MovimientosPage() {
 
           <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-red-700">
-              Salidas
+              Salidas (página actual)
             </p>
 
             <p className="mt-2 text-3xl font-bold text-red-800">
@@ -499,7 +499,7 @@ export default function MovimientosPage() {
 
           <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-blue-700">
-              Ajustes
+              Ajustes (página actual)
             </p>
 
             <p className="mt-2 text-3xl font-bold text-blue-800">
@@ -812,12 +812,13 @@ export default function MovimientosPage() {
             <p className="text-sm text-slate-500">
               Mostrando{" "}
               <span className="font-semibold text-slate-700">
-                {filteredMovements.length}
+                {movements.length}
               </span>{" "}
-              movimiento
-              {filteredMovements.length !== 1
-                ? "s"
-                : ""}
+              de{" "}
+              <span className="font-semibold text-slate-700">
+                {total}
+              </span>{" "}
+              movimientos
             </p>
           </div>
         )}
@@ -849,7 +850,7 @@ export default function MovimientosPage() {
             <button
               type="button"
               onClick={() => {
-                void loadMovements();
+                void loadMovements(offset);
               }}
               className="mt-4 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
             >
@@ -863,7 +864,7 @@ export default function MovimientosPage() {
         {!loading && !error && (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
-            {filteredMovements.length === 0 ? (
+            {movements.length === 0 ? (
               <div className="p-12 text-center">
 
                 <div className="text-5xl">
@@ -875,12 +876,12 @@ export default function MovimientosPage() {
                 </p>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  {movements.length === 0
+                  {total === 0
                     ? "Cuando registres una entrada, salida o ajuste aparecerá aquí."
                     : "Prueba cambiando los filtros de búsqueda."}
                 </p>
 
-                {movements.length === 0 && (
+                {total === 0 && (
                   <button
                     type="button"
                     onClick={() => {
@@ -935,7 +936,7 @@ export default function MovimientosPage() {
 
                   <tbody className="divide-y divide-slate-100">
 
-                    {filteredMovements.map(
+                    {movements.map(
                       (movement) => (
                         <tr
                           key={movement.id}
@@ -1019,6 +1020,42 @@ export default function MovimientosPage() {
 
                 </table>
 
+              </div>
+            )}
+
+            {/* PAGINACIÓN */}
+
+            {movements.length > 0 && (
+              <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+                <p className="text-sm text-slate-500">
+                  Página {currentPage} de {totalPages}
+                </p>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={offset === 0}
+                    onClick={() =>
+                      loadMovements(
+                        Math.max(0, offset - PAGE_SIZE)
+                      )
+                    }
+                    className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Anterior
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={offset + PAGE_SIZE >= total}
+                    onClick={() =>
+                      loadMovements(offset + PAGE_SIZE)
+                    }
+                    className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Siguiente
+                  </button>
+                </div>
               </div>
             )}
 

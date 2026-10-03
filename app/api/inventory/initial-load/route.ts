@@ -19,6 +19,9 @@ type RawLoadItem = {
   reason?: unknown;
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: Request) {
   try {
     /*
@@ -27,7 +30,7 @@ export async function POST(request: Request) {
      * ---------------------------------------------------------
      *
      * Usamos el cliente de sesión (no la llave secreta): así
-     * register_inventory_movement puede ejecutar auth.uid() y
+     * register_initial_load puede ejecutar auth.uid() y
      * assert_store_role() lo valida de nuevo del lado de la base.
      */
 
@@ -47,13 +50,26 @@ export async function POST(request: Request) {
      * ---------------------------------------------------------
      */
 
-    let body: { items?: unknown } | null;
+    let body: { items?: unknown; request_id?: unknown } | null;
 
     try {
       body = await request.json();
     } catch {
       return NextResponse.json(
         { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
+      );
+    }
+
+    const requestId =
+      typeof body?.request_id === "string" ? body.request_id : "";
+
+    if (!UUID_RE.test(requestId)) {
+      return NextResponse.json(
+        {
+          error:
+            "request_id es obligatorio y debe ser un UUID (tanda 3, A3: evita aplicar la misma carga dos veces).",
+        },
         { status: 400 }
       );
     }
@@ -149,14 +165,13 @@ export async function POST(request: Request) {
 
     /*
      * ---------------------------------------------------------
-     * BUSCAR PRODUCTOS
+     * RESOLVER SKU -> PRODUCTO
      * ---------------------------------------------------------
      *
-     * Se buscan todos los productos de la tienda
-     * y posteriormente se cruzan por SKU.
-     *
-     * Esto evita hacer una consulta a Supabase
-     * por cada fila del archivo.
+     * register_initial_load (tanda 3, A3) trabaja con product_id, no
+     * con SKU: se resuelve aquí, igual que antes, para poder seguir
+     * dando errores con el SKU tal como lo escribió el usuario y para
+     * no tener que hacer una consulta a Supabase por cada fila.
      */
 
     const { data: products, error: productsError } =
@@ -206,13 +221,19 @@ export async function POST(request: Request) {
       });
     }
 
-    /*
-     * ---------------------------------------------------------
-     * VALIDACIÓN COMPLETA ANTES DE MODIFICAR STOCK
-     * ---------------------------------------------------------
-     */
-
     const validationErrors: string[] = [];
+    // product_id -> sku/nombre, para traducir la respuesta de la RPC
+    // de vuelta a algo legible (la RPC solo conoce product_id).
+    const productById = new Map<
+      string,
+      { sku: string; name: string }
+    >();
+
+    const rpcItems: {
+      product_id: string;
+      quantity: number;
+      reason: string | null;
+    }[] = [];
 
     for (const item of items) {
       const product = productMap.get(
@@ -223,7 +244,19 @@ export async function POST(request: Request) {
         validationErrors.push(
           `No existe un producto con SKU ${item.sku}.`
         );
+        continue;
       }
+
+      productById.set(product.id, {
+        sku: product.sku ?? item.sku,
+        name: product.name,
+      });
+
+      rpcItems.push({
+        product_id: product.id,
+        quantity: item.quantity,
+        reason: item.reason || "Inventario inicial",
+      });
     }
 
     if (validationErrors.length > 0) {
@@ -238,81 +271,56 @@ export async function POST(request: Request) {
 
     /*
      * ---------------------------------------------------------
-     * REGISTRAR AJUSTES
+     * APLICAR LA CARGA (una sola llamada, una sola transacción)
      * ---------------------------------------------------------
      *
-     * IMPORTANTE:
-     *
-     * Usamos el mismo RPC que ya utiliza
-     * /api/inventory/movements.
-     *
-     * Esto mantiene una única lógica para actualizar
-     * el stock y registrar movimientos.
+     * register_initial_load valida todos los ítems antes de aplicar
+     * nada y usa p_request_id para rechazar un reintento de la misma
+     * carga sin volver a tocar el stock.
      */
 
-    const results = [];
+    const { data: result, error: rpcError } = await supabase.rpc(
+      "register_initial_load",
+      {
+        p_store_id: storeId,
+        p_items: rpcItems,
+        p_request_id: requestId,
+      }
+    );
 
-    for (const item of items) {
-      const product = productMap.get(
-        item.sku.trim().toLowerCase()
+    if (rpcError) {
+      console.error(
+        "ERROR EN register_initial_load:",
+        rpcError
       );
 
-      if (!product) {
-        continue;
-      }
-
-      const { data: movement, error: movementError } =
-        await supabase.rpc("register_inventory_movement", {
-          p_product_id: product.id,
-
-          p_movement_type: "ajuste",
-
-          /*
-           * En un ajuste la cantidad representa
-           * el STOCK FINAL deseado.
-           */
-          p_quantity: item.quantity,
-
-          p_reason: item.reason || "Inventario inicial",
-
-          p_store_id: storeId,
-        });
-
-      if (movementError) {
-        console.error(
-          `ERROR AJUSTANDO SKU ${item.sku}:`,
-          movementError
-        );
-
-        return NextResponse.json(
-          {
-            error: `SKU ${item.sku}: ${rpcErrorMessage(
-              movementError,
-              "no se pudo actualizar."
-            )}`,
-            results,
-          },
-          { status: 400 }
-        );
-      }
-
-      /*
-       * Dependiendo de cómo esté definida
-       * la función PostgreSQL, movement puede
-       * ser objeto o arreglo.
-       */
-
-      const movementData = Array.isArray(movement)
-        ? movement[0]
-        : movement;
-
-      results.push({
-        sku: item.sku,
-        product_name: product.name,
-        stock_before: movementData?.stock_before ?? product.stock,
-        stock_after: movementData?.stock_after ?? item.quantity,
-      });
+      return NextResponse.json(
+        {
+          error: rpcErrorMessage(
+            rpcError,
+            "No se pudo procesar la carga inicial."
+          ),
+        },
+        { status: 400 }
+      );
     }
+
+    const rpcResultItems: Array<{
+      product_id: string;
+      stock_before?: number;
+      stock_after?: number;
+    }> = Array.isArray(result?.items) ? result.items : [];
+
+    const results = rpcResultItems.map((movement) => {
+      const info = productById.get(movement.product_id);
+
+      return {
+        sku: info?.sku ?? movement.product_id,
+        product_name: info?.name ?? "",
+        stock_before: movement.stock_before ?? null,
+        stock_after: movement.stock_after ?? null,
+      };
+    });
 
     /*
      * ---------------------------------------------------------
