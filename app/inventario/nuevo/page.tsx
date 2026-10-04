@@ -514,8 +514,9 @@ export default function NuevoProductoPage() {
                 <input
                   id="purchase_price"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
-                  step="0.01"
+                  step="any"
                   value={form.purchase_price}
                   onChange={(e) =>
                     updateField(
@@ -539,8 +540,9 @@ export default function NuevoProductoPage() {
                 <input
                   id="sale_price"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
-                  step="0.01"
+                  step="any"
                   value={form.sale_price}
                   onChange={(e) =>
                     updateField(
@@ -601,6 +603,7 @@ export default function NuevoProductoPage() {
                 <input
                   id="tax_rate"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   max="100"
                   step="0.01"
@@ -652,6 +655,7 @@ export default function NuevoProductoPage() {
                   id="minimum_stock"
                   required
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   value={form.minimum_stock}
                   onChange={(e) =>
@@ -676,6 +680,7 @@ export default function NuevoProductoPage() {
                 <input
                   id="maximum_stock"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   value={form.maximum_stock}
                   onChange={(e) =>
@@ -700,6 +705,7 @@ export default function NuevoProductoPage() {
                 <input
                   id="reorder_point"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   value={form.reorder_point}
                   onChange={(e) =>

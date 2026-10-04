@@ -1088,8 +1088,9 @@ export default function EditarProductoPage() {
                 <input
                   id="purchase_price"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
-                  step="0.01"
+                  step="any"
                   value={
                     form.purchase_price
                   }
@@ -1114,8 +1115,9 @@ export default function EditarProductoPage() {
                 <input
                   id="sale_price"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
-                  step="0.01"
+                  step="any"
                   value={
                     form.sale_price
                   }
@@ -1181,6 +1183,7 @@ export default function EditarProductoPage() {
                 <input
                   id="tax_rate"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   max="100"
                   step="0.01"
@@ -1247,6 +1250,7 @@ export default function EditarProductoPage() {
                 <input
                   id="minimum_stock"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   value={
                     form.minimum_stock
@@ -1272,6 +1276,7 @@ export default function EditarProductoPage() {
                 <input
                   id="maximum_stock"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   value={
                     form.maximum_stock
@@ -1297,6 +1302,7 @@ export default function EditarProductoPage() {
                 <input
                   id="reorder_point"
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="0"
                   value={
                     form.reorder_point
@@ -1489,6 +1495,7 @@ export default function EditarProductoPage() {
                       <input
                         id="lot_quantity"
                         type="number"
+                        onWheel={(event) => event.currentTarget.blur()}
                         min="0"
                         step="1"
                         value={

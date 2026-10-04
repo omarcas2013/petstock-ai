@@ -1145,6 +1145,7 @@ export default function TrasladosPage() {
 
                 <input
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min="1"
                   max={
                     availableStock > 0

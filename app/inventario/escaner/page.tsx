@@ -605,6 +605,7 @@ export default function ScannerPage() {
 
                 <input
                   type="number"
+                  onWheel={(event) => event.currentTarget.blur()}
                   min={1}
                   value={quantity}
                   onChange={(event) => {

@@ -25,9 +25,81 @@ function onlyActive(products: unknown): Product[] {
 }
 
 type CartItem = {
+  // Tanda 4: un mismo producto puede ir en varias líneas, una por
+  // origen (sin ubicar o cada ubicación).
+  lineKey: string;
   product: Product;
   quantity: number;
+  // Tanda 4: de dónde sale. null = "sin ubicar"; "" = falta elegir.
+  stockId: string | null | "";
 };
+
+// Existencia ubicada de un producto (fila de inventory_stock).
+type StockOption = {
+  id: string;
+  label: string;
+  quantity: number;
+};
+
+type StockApiRow = {
+  id: string;
+  product_id: string;
+  quantity: number;
+  branches: { name: string } | null;
+  warehouses: { name: string } | null;
+  locations: { name: string } | null;
+};
+
+async function fetchLocatedStock(): Promise<
+  Record<string, StockOption[]>
+> {
+  const response = await fetch("/api/inventory/stock", {
+    cache: "no-store",
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ||
+        "Error cargando existencias por ubicación."
+    );
+  }
+
+  const grouped: Record<string, StockOption[]> = {};
+
+  for (const row of (result.stock ?? []) as StockApiRow[]) {
+    const quantity = Number(row.quantity || 0);
+
+    if (quantity <= 0) {
+      continue;
+    }
+
+    (grouped[row.product_id] ??= []).push({
+      id: row.id,
+      label: stockLabel(row),
+      quantity,
+    });
+  }
+
+  for (const options of Object.values(grouped)) {
+    options.sort((a, b) => b.quantity - a.quantity);
+  }
+
+  return grouped;
+}
+
+function stockLabel(row: StockApiRow) {
+  if (row.locations?.name) {
+    return `${row.warehouses?.name ?? "Almacén"} · ${row.locations.name}`;
+  }
+
+  if (row.warehouses?.name) {
+    return row.warehouses.name;
+  }
+
+  return row.branches?.name ?? "Ubicación";
+}
 
 type SaleItem = {
   id: string;
@@ -59,6 +131,10 @@ export default function VentasPage() {
 
   const [cart, setCart] =
     useState<CartItem[]>([]);
+
+  // product_id -> existencias ubicadas con cantidad > 0
+  const [locatedByProduct, setLocatedByProduct] =
+    useState<Record<string, StockOption[]>>({});
 
   const [sales, setSales] =
     useState<Sale[]>([]);
@@ -123,6 +199,97 @@ export default function VentasPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadLocatedStock() {
+    try {
+      setLocatedByProduct(await fetchLocatedStock());
+    } catch (error) {
+      console.error(error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Error cargando existencias por ubicación."
+      );
+    }
+  }
+
+  function locatedTotal(productId: string) {
+    return (locatedByProduct[productId] ?? []).reduce(
+      (sum, option) => sum + option.quantity,
+      0
+    );
+  }
+
+  function unlocatedQuantity(product: Product) {
+    // Usar el stock más reciente (el del carrito puede estar viejo).
+    const current =
+      products.find((candidate) => candidate.id === product.id) ??
+      product;
+
+    return Math.max(
+      Number(current.stock || 0) - locatedTotal(product.id),
+      0
+    );
+  }
+
+  // Máximo vendible en la línea según el origen elegido.
+  function maxForItem(item: CartItem) {
+    if (item.stockId === "") {
+      return 0;
+    }
+
+    if (item.stockId === null) {
+      return unlocatedQuantity(item.product);
+    }
+
+    const option = (
+      locatedByProduct[item.product.id] ?? []
+    ).find((candidate) => candidate.id === item.stockId);
+
+    return option?.quantity ?? 0;
+  }
+
+  // Orígenes ya usados por otras líneas del mismo producto.
+  function usedSources(
+    productId: string,
+    exceptLineKey?: string
+  ) {
+    return new Set(
+      cart
+        .filter(
+          (item) =>
+            item.product.id === productId &&
+            item.lineKey !== exceptLineKey &&
+            item.stockId !== ""
+        )
+        .map((item) => item.stockId ?? "__sin_ubicar__")
+    );
+  }
+
+  function changeSource(
+    lineKey: string,
+    value: string
+  ) {
+    setCart((previous) =>
+      previous.map((item) => {
+        if (item.lineKey !== lineKey) {
+          return item;
+        }
+
+        const stockId =
+          value === "__sin_ubicar__" ? null : value;
+
+        const next = { ...item, stockId };
+        const max = maxForItem(next);
+
+        return {
+          ...next,
+          quantity: Math.max(1, Math.min(item.quantity, max || 1)),
+        };
+      })
+    );
   }
 
   async function loadSales() {
@@ -223,6 +390,7 @@ export default function VentasPage() {
 
         setError("");
         setSalesError("");
+
       } catch (error) {
         if (cancelled) {
           return;
@@ -245,7 +413,31 @@ export default function VentasPage() {
       }
     }
 
+    // Existencias por ubicación (para elegir de dónde sale cada
+    // producto en el carrito). Aparte, para que un fallo aquí no
+    // marque como fallido el historial de ventas.
+    async function fetchInitialLocated() {
+      try {
+        const located = await fetchLocatedStock();
+
+        if (!cancelled) {
+          setLocatedByProduct(located);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error(error);
+
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Error cargando existencias por ubicación."
+          );
+        }
+      }
+    }
+
     fetchInitialData();
+    fetchInitialLocated();
 
     return () => {
       cancelled = true;
@@ -335,67 +527,86 @@ export default function VentasPage() {
       return;
     }
 
-    setCart((previous) => {
-      const existing =
-        previous.find(
-          (item) =>
-            item.product.id ===
-            product.id
-        );
+    const lines = cart.filter(
+      (item) => item.product.id === product.id
+    );
 
-      if (existing) {
-        if (
-          existing.quantity >=
-          product.stock
-        ) {
-          return previous;
-        }
+    // 1. Sumar a una línea que todavía tenga cupo en su origen.
+    const withRoom = lines.find(
+      (item) =>
+        item.stockId !== "" &&
+        item.quantity < maxForItem(item)
+    );
 
-        return previous.map(
-          (item) =>
-            item.product.id ===
-            product.id
-              ? {
-                  ...item,
-                  quantity:
-                    item.quantity + 1,
-                }
-              : item
-        );
-      }
+    if (withRoom) {
+      setCart((previous) =>
+        previous.map((item) =>
+          item.lineKey === withRoom.lineKey
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        )
+      );
+      return;
+    }
 
-      return [
-        ...previous,
-        {
-          product,
-          quantity: 1,
-        },
-      ];
-    });
+    if (lines.some((item) => item.stockId === "")) {
+      setMessage(
+        `Elige de qué ubicación sale ${product.name}.`
+      );
+      return;
+    }
+
+    // 2. Abrir otra línea desde un origen que aún no se use.
+    const used = usedSources(product.id);
+    const located = locatedByProduct[product.id] ?? [];
+
+    const unlocatedFree =
+      !used.has("__sin_ubicar__") &&
+      unlocatedQuantity(product) > 0;
+
+    const locatedFree = located.filter(
+      (option) => !used.has(option.id)
+    );
+
+    if (!unlocatedFree && locatedFree.length === 0) {
+      setMessage(
+        `No hay más unidades disponibles de ${product.name}.`
+      );
+      return;
+    }
+
+    // Si hay unidades sin ubicar, sale de ahí por defecto; si no, el
+    // vendedor elige la ubicación.
+    setCart((previous) => [
+      ...previous,
+      {
+        lineKey: crypto.randomUUID(),
+        product,
+        quantity: 1,
+        stockId: unlocatedFree ? null : "",
+      },
+    ]);
   }
 
   function updateQuantity(
-    productId: string,
+    lineKey: string,
     quantity: number
   ) {
     if (quantity <= 0) {
-      removeFromCart(productId);
+      removeFromCart(lineKey);
       return;
     }
 
     setCart((previous) =>
       previous.map((item) => {
-        if (
-          item.product.id !==
-          productId
-        ) {
+        if (item.lineKey !== lineKey) {
           return item;
         }
 
         const safeQuantity =
           Math.min(
             quantity,
-            item.product.stock
+            Math.max(maxForItem(item), 1)
           );
 
         return {
@@ -407,13 +618,11 @@ export default function VentasPage() {
   }
 
   function removeFromCart(
-    productId: string
+    lineKey: string
   ) {
     setCart((previous) =>
       previous.filter(
-        (item) =>
-          item.product.id !==
-          productId
+        (item) => item.lineKey !== lineKey
       )
     );
   }
@@ -451,6 +660,30 @@ export default function VentasPage() {
       return;
     }
 
+    const missingSource = cart.find(
+      (item) => item.stockId === ""
+    );
+
+    if (missingSource) {
+      setMessage(
+        `Elige de qué ubicación sale ${missingSource.product.name}.`
+      );
+      return;
+    }
+
+    const overLimit = cart.find(
+      (item) => item.quantity > maxForItem(item)
+    );
+
+    if (overLimit) {
+      setMessage(
+        `No hay suficientes unidades de ${overLimit.product.name} en el origen elegido (máximo ${maxForItem(
+          overLimit
+        )}).`
+      );
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -460,6 +693,8 @@ export default function VentasPage() {
             item.product.id,
           quantity:
             item.quantity,
+          stock_id:
+            item.stockId || null,
         })
       );
 
@@ -509,6 +744,7 @@ export default function VentasPage() {
       );
 
       await loadProducts();
+      await loadLocatedStock();
       await loadSales();
     } catch (error) {
       console.error(error);
@@ -518,6 +754,11 @@ export default function VentasPage() {
           ? error.message
           : "No se pudo registrar la venta."
       );
+
+      // Otra venta pudo cambiar las existencias: refrescar para que el
+      // selector de origen muestre cantidades reales.
+      void loadProducts();
+      void loadLocatedStock();
     } finally {
       setSaving(false);
     }
@@ -734,9 +975,7 @@ export default function VentasPage() {
                 {cart.map(
                   (item) => (
                     <div
-                      key={
-                        item.product.id
-                      }
+                      key={item.lineKey}
                       className="border-b pb-4"
                     >
                       <div className="flex justify-between gap-3">
@@ -762,11 +1001,7 @@ export default function VentasPage() {
                         <button
                           type="button"
                           onClick={() =>
-                            removeFromCart(
-                              item
-                                .product
-                                .id
-                            )
+                            removeFromCart(item.lineKey)
                           }
                           className="text-sm text-red-600"
                         >
@@ -779,10 +1014,7 @@ export default function VentasPage() {
                           <button
                             type="button"
                             onClick={() =>
-                              updateQuantity(
-                                item
-                                  .product
-                                  .id,
+                              updateQuantity(item.lineKey,
                                 item.quantity -
                                   1
                               )
@@ -801,19 +1033,14 @@ export default function VentasPage() {
                           <button
                             type="button"
                             onClick={() =>
-                              updateQuantity(
-                                item
-                                  .product
-                                  .id,
+                              updateQuantity(item.lineKey,
                                 item.quantity +
                                   1
                               )
                             }
                             disabled={
                               item.quantity >=
-                              item
-                                .product
-                                .stock
+                              maxForItem(item)
                             }
                             className="px-3 py-2 disabled:opacity-40"
                           >
@@ -830,6 +1057,75 @@ export default function VentasPage() {
                           )}
                         </span>
                       </div>
+
+                      {(locatedByProduct[item.product.id] ?? [])
+                        .length > 0 && (
+                        <div className="mt-3">
+                          <label className="text-xs font-medium text-gray-600">
+                            Sale de
+                          </label>
+
+                          <select
+                            value={
+                              item.stockId === null
+                                ? "__sin_ubicar__"
+                                : item.stockId
+                            }
+                            onChange={(e) =>
+                              changeSource(
+                                item.lineKey,
+                                e.target.value
+                              )
+                            }
+                            className={`mt-1 w-full rounded-lg border p-2 text-sm ${
+                              item.stockId === ""
+                                ? "border-red-400 bg-red-50"
+                                : "border-gray-300"
+                            }`}
+                          >
+                            <option value="" disabled>
+                              Elige la ubicación…
+                            </option>
+
+                            <option
+                              value="__sin_ubicar__"
+                              disabled={
+                                unlocatedQuantity(
+                                  item.product
+                                ) === 0 ||
+                                usedSources(
+                                  item.product.id,
+                                  item.lineKey
+                                ).has("__sin_ubicar__")
+                              }
+                            >
+                              Sin ubicar (
+                              {unlocatedQuantity(
+                                item.product
+                              )}
+                              )
+                            </option>
+
+                            {(
+                              locatedByProduct[
+                                item.product.id
+                              ] ?? []
+                            ).map((option) => (
+                              <option
+                                key={option.id}
+                                value={option.id}
+                                disabled={usedSources(
+                                  item.product.id,
+                                  item.lineKey
+                                ).has(option.id)}
+                              >
+                                {option.label} (
+                                {option.quantity})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   )
                 )}

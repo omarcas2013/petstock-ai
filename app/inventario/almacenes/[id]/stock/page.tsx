@@ -157,6 +157,16 @@ export default function WarehouseStockPage() {
   const [transferOpen, setTransferOpen] =
     useState(false);
 
+  // Tanda 4: liberar unidades de una ubicación (pasan a "sin ubicar").
+  const [releaseRow, setReleaseRow] =
+    useState<StockRow | null>(null);
+  const [releaseQuantity, setReleaseQuantity] =
+    useState("");
+  const [releaseSaving, setReleaseSaving] =
+    useState(false);
+  const [releaseError, setReleaseError] =
+    useState("");
+
   const [form, setForm] =
     useState<StockForm>(EMPTY_FORM);
 
@@ -510,6 +520,79 @@ export default function WarehouseStockPage() {
 
     setFormOpen(false);
     setForm(EMPTY_FORM);
+  };
+
+  const openReleaseForm = (row: StockRow) => {
+    setReleaseRow(row);
+    setReleaseQuantity(String(row.quantity));
+    setReleaseError("");
+    setMessage("");
+  };
+
+  const handleReleaseSubmit = async (
+    event: FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+
+    if (!releaseRow) {
+      return;
+    }
+
+    const quantity = Number(releaseQuantity);
+
+    if (
+      !Number.isInteger(quantity) ||
+      quantity <= 0 ||
+      quantity > releaseRow.quantity
+    ) {
+      setReleaseError(
+        `La cantidad debe ser un entero entre 1 y ${releaseRow.quantity}.`
+      );
+      return;
+    }
+
+    try {
+      setReleaseSaving(true);
+      setReleaseError("");
+
+      const response = await fetch(
+        "/api/inventory/stock",
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            stock_id: releaseRow.id,
+            quantity,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "No se pudo liberar la existencia."
+        );
+      }
+
+      setReleaseRow(null);
+      setMessage(
+        `Se liberaron ${quantity} unidades: ahora están sin ubicar.`
+      );
+
+      await loadData();
+    } catch (error) {
+      setReleaseError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo liberar la existencia."
+      );
+    } finally {
+      setReleaseSaving(false);
+    }
   };
 
   const openTransferForm = (
@@ -1161,6 +1244,17 @@ export default function WarehouseStockPage() {
                           >
                             🔄 Trasladar
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openReleaseForm(row)
+                            }
+                            disabled={row.quantity <= 0}
+                            className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            ↩ Liberar
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1306,6 +1400,7 @@ export default function WarehouseStockPage() {
 
                       <input
                         type="number"
+                        onWheel={(event) => event.currentTarget.blur()}
                         min="0"
                         step="1"
                         value={form.quantity}
@@ -1367,6 +1462,75 @@ export default function WarehouseStockPage() {
                 </div>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* RELEASE MODAL (tanda 4) */}
+      {releaseRow && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4">
+          <div className="flex min-h-full items-center justify-center">
+            <form
+              onSubmit={handleReleaseSubmit}
+              className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            >
+              <h2 className="text-xl font-bold text-slate-900">
+                Liberar unidades
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-600">
+                {releaseRow.products?.name ?? "Producto"} en{" "}
+                {releaseRow.locations?.name ?? "esta ubicación"}:{" "}
+                {releaseRow.quantity} unidades. Las unidades
+                liberadas quedan &quot;sin ubicar&quot;; el stock
+                total no cambia.
+              </p>
+
+              <label className="mt-4 block text-sm font-medium text-slate-700">
+                Cantidad a liberar
+              </label>
+
+              <input
+                type="number"
+                min="1"
+                max={releaseRow.quantity}
+                step="1"
+                value={releaseQuantity}
+                onChange={(event) =>
+                  setReleaseQuantity(event.target.value)
+                }
+                onWheel={(event) =>
+                  event.currentTarget.blur()
+                }
+                disabled={releaseSaving}
+                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+              />
+
+              {releaseError && (
+                <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                  {releaseError}
+                </p>
+              )}
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setReleaseRow(null)}
+                  disabled={releaseSaving}
+                  className="rounded-xl border border-slate-300 px-5 py-3 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={releaseSaving}
+                  className="rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {releaseSaving ? "Liberando..." : "Liberar"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1668,6 +1832,7 @@ export default function WarehouseStockPage() {
 
                       <input
                         type="number"
+                        onWheel={(event) => event.currentTarget.blur()}
                         min="1"
                         step="1"
                         value={

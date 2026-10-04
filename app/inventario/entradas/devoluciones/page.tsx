@@ -1054,6 +1054,7 @@ export default function DevolucionesPage() {
 
                   <input
                     type="number"
+                    onWheel={(event) => event.currentTarget.blur()}
                     min="1"
                     max={
                       selectedItem.remaining_to_return ??

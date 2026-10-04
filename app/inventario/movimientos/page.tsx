@@ -63,6 +63,14 @@ export default function MovimientosPage() {
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
 
+  // Tanda 4: origen de una salida. "" = sin ubicar.
+  const [stockId, setStockId] = useState("");
+  const [stockOptions, setStockOptions] = useState<
+    { id: string; label: string; quantity: number }[]
+  >([]);
+  // Descarta respuestas tardías si el usuario cambió de producto.
+  const latestStockRequestRef = useRef(0);
+
   // Descarta una respuesta tardía si el usuario siguió escribiendo o
   // cambió de página antes de que esta llegara.
   const latestRequestRef = useRef(0);
@@ -313,6 +321,83 @@ export default function MovimientosPage() {
     setQuantity("");
     setReason("");
     setFormError("");
+    setStockId("");
+    setStockOptions([]);
+  }
+
+  /*
+   * Existencias ubicadas del producto, para elegir de dónde sale una
+   * salida. Se llama desde los onChange (no desde un efecto).
+   */
+  async function refreshStockOptions(
+    nextProductId: string,
+    nextType: MovementType
+  ) {
+    const requestId = ++latestStockRequestRef.current;
+
+    setStockId("");
+    setStockOptions([]);
+
+    if (!nextProductId || nextType !== "salida") {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/inventory/stock?product_id=${encodeURIComponent(
+          nextProductId
+        )}`,
+        { cache: "no-store" }
+      );
+
+      const result = await response.json();
+
+      if (latestStockRequestRef.current !== requestId) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "No se pudieron cargar las ubicaciones."
+        );
+      }
+
+      type Row = {
+        id: string;
+        quantity: number;
+        branches: { name: string } | null;
+        warehouses: { name: string } | null;
+        locations: { name: string } | null;
+      };
+
+      setStockOptions(
+        ((result.stock ?? []) as Row[])
+          .filter((row) => Number(row.quantity) > 0)
+          .map((row) => ({
+            id: row.id,
+            quantity: Number(row.quantity),
+            label: row.locations?.name
+              ? `${row.warehouses?.name ?? "Almacén"} · ${row.locations.name}`
+              : row.warehouses?.name ??
+                row.branches?.name ??
+                "Ubicación",
+          }))
+          .sort((a, b) => b.quantity - a.quantity)
+      );
+    } catch (error) {
+      if (latestStockRequestRef.current !== requestId) {
+        return;
+      }
+
+      console.error(error);
+
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron cargar las ubicaciones."
+      );
+    }
   }
 
   /*
@@ -380,6 +465,27 @@ export default function MovimientosPage() {
       return;
     }
 
+    if (movementType === "salida" && selectedProduct) {
+      const located = stockOptions.reduce(
+        (sum, option) => sum + option.quantity,
+        0
+      );
+
+      const available = stockId
+        ? stockOptions.find((option) => option.id === stockId)
+            ?.quantity ?? 0
+        : Math.max(selectedProduct.stock - located, 0);
+
+      if (numericQuantity > available) {
+        setFormError(
+          stockId
+            ? `En esa ubicación solo hay ${available} unidades.`
+            : `Sin ubicar solo hay ${available} unidades. Elige una ubicación de origen.`
+        );
+        return;
+      }
+    }
+
     try {
       setSaving(true);
 
@@ -395,6 +501,10 @@ export default function MovimientosPage() {
             movement_type: movementType,
             quantity: numericQuantity,
             reason: reason.trim() || null,
+            stock_id:
+              movementType === "salida" && stockId
+                ? stockId
+                : null,
           }),
         }
       );
@@ -595,9 +705,13 @@ export default function MovimientosPage() {
 
                   <select
                     value={productId}
-                    onChange={(event) =>
-                      setProductId(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setProductId(event.target.value);
+                      void refreshStockOptions(
+                        event.target.value,
+                        movementType
+                      );
+                    }}
                     disabled={
                       loadingProducts || saving
                     }
@@ -633,11 +747,16 @@ export default function MovimientosPage() {
 
                   <select
                     value={movementType}
-                    onChange={(event) =>
-                      setMovementType(
-                        event.target.value as MovementType
-                      )
-                    }
+                    onChange={(event) => {
+                      const nextType =
+                        event.target.value as MovementType;
+
+                      setMovementType(nextType);
+                      void refreshStockOptions(
+                        productId,
+                        nextType
+                      );
+                    }}
                     disabled={saving}
                     className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
@@ -666,6 +785,7 @@ export default function MovimientosPage() {
 
                   <input
                     type="number"
+                    onWheel={(event) => event.currentTarget.blur()}
                     min="0"
                     step="1"
                     value={quantity}
@@ -690,6 +810,49 @@ export default function MovimientosPage() {
                     </p>
                   )}
                 </div>
+
+                {/* ORIGEN DE LA SALIDA (tanda 4) */}
+
+                {movementType === "salida" &&
+                  stockOptions.length > 0 && (
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">
+                        Sale de
+                      </label>
+
+                      <select
+                        value={stockId}
+                        onChange={(event) =>
+                          setStockId(event.target.value)
+                        }
+                        disabled={saving}
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                      >
+                        <option value="">
+                          Sin ubicar (
+                          {Math.max(
+                            (selectedProduct?.stock ?? 0) -
+                              stockOptions.reduce(
+                                (sum, option) =>
+                                  sum + option.quantity,
+                                0
+                              ),
+                            0
+                          )}
+                          )
+                        </option>
+
+                        {stockOptions.map((option) => (
+                          <option
+                            key={option.id}
+                            value={option.id}
+                          >
+                            {option.label} ({option.quantity})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                 {/* MOTIVO */}
 

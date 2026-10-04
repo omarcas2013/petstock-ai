@@ -55,6 +55,9 @@ function parsePageParams(searchParams: URLSearchParams) {
 type SaleItemInput = {
   product_id: string;
   quantity: number;
+  // Tanda 4: fila de inventory_stock de la que sale el producto.
+  // Opcional: sin ella, la venta sale de lo "sin ubicar".
+  stock_id?: string | null;
 };
 
 type CreateSaleBody = {
@@ -282,6 +285,20 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+
+      if (
+        item.stock_id !== undefined &&
+        item.stock_id !== null &&
+        (typeof item.stock_id !== "string" ||
+          !UUID_RE.test(item.stock_id.trim()))
+      ) {
+        return NextResponse.json(
+          {
+            error: "La ubicación de origen no es válida.",
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // ==========================================================
@@ -292,6 +309,11 @@ export async function POST(request: NextRequest) {
       (item) => ({
         product_id: item.product_id.trim(),
         quantity: item.quantity,
+        stock_id:
+          typeof item.stock_id === "string" &&
+          item.stock_id.trim() !== ""
+            ? item.stock_id.trim()
+            : null,
       })
     );
 

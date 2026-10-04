@@ -1545,6 +1545,7 @@ export default function ComprasPage() {
 
                     <input
                       type="number"
+                      onWheel={(event) => event.currentTarget.blur()}
                       min="1"
                       step="1"
                       value={quantityInput}
@@ -1564,6 +1565,7 @@ export default function ComprasPage() {
 
                     <input
                       type="number"
+                      onWheel={(event) => event.currentTarget.blur()}
                       min="0"
                       value={unitCost}
                       onChange={(event) =>

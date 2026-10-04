@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import {
   useCallback,
   useEffect,
@@ -48,6 +50,8 @@ export default function ReporteMovimientosPage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Tanda 4: 403 (employee) muestra un aviso en vez del error.
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const [startDate, setStartDate] = useState(
     getTodayString()
@@ -92,6 +96,11 @@ export default function ReporteMovimientosPage() {
         const result = await response.json();
 
         if (latestRequestRef.current !== requestId) {
+          return;
+        }
+
+        if (response.status === 403) {
+          setAccessDenied(true);
           return;
         }
 
@@ -296,6 +305,32 @@ export default function ReporteMovimientosPage() {
   const totalExits = filteredTotals.exits;
   const totalAdjustments = filteredTotals.adjustmentVariance;
   const netChange = filteredTotals.netChange;
+
+
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <p className="text-4xl">🔒</p>
+
+          <h1 className="mt-4 text-xl font-bold text-slate-900">
+            No tienes acceso a Reportes
+          </h1>
+
+          <p className="mt-2 text-sm text-slate-600">
+            Esta sección es solo para owner, admin o manager.
+          </p>
+
+          <Link
+            href="/"
+            className="mt-6 inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Volver al inicio
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <>
