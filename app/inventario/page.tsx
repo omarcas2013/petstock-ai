@@ -1721,6 +1721,7 @@ export default function InventarioPage() {
 
                   <input
                     type="number"
+                    onWheel={(event) => event.currentTarget.blur()}
                     min={
                       movementType ===
                       "ajuste"
@@ -1995,6 +1996,7 @@ export default function InventarioPage() {
                         <td className="px-6 py-4">
                           <input
                             type="number"
+                            onWheel={(event) => event.currentTarget.blur()}
                             min="0"
                             step="1"
                             value={getInitialQuantity(

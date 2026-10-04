@@ -287,3 +287,90 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+/**
+ * PATCH
+ *
+ * Tanda 4: libera unidades de una existencia ubicada (pasan a "sin
+ * ubicar"). No cambia products.stock ni crea movimientos: solo baja
+ * lo ubicado, para poder hacer ajustes o salidas sin ubicación.
+ *
+ * Body: { stock_id, quantity }
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    const auth = await requireRole(INVENTORY_MANAGER_ROLES);
+
+    if (!auth.ok) {
+      return auth.response;
+    }
+
+    const { supabase, profile } = auth;
+
+    let body: { stock_id?: unknown; quantity?: unknown };
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "El cuerpo de la solicitud no es JSON válido." },
+        { status: 400 }
+      );
+    }
+
+    const stockId =
+      typeof body?.stock_id === "string" ? body.stock_id.trim() : "";
+
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        stockId
+      )
+    ) {
+      return NextResponse.json(
+        { error: "La existencia no es válida." },
+        { status: 400 }
+      );
+    }
+
+    const quantity = Number(body?.quantity);
+
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return NextResponse.json(
+        { error: "La cantidad a liberar debe ser un entero mayor que 0." },
+        { status: 400 }
+      );
+    }
+
+    const { data, error } = await supabase.rpc(
+      "release_location_stock",
+      {
+        p_store_id: profile.store_id,
+        p_stock_id: stockId,
+        p_quantity: quantity,
+      }
+    );
+
+    if (error) {
+      console.error("Error liberando existencia:", error);
+
+      return NextResponse.json(
+        {
+          error: rpcErrorMessage(
+            error,
+            "No se pudo liberar la existencia."
+          ),
+        },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({ ok: true, result: data });
+  } catch (error) {
+    console.error("Error PATCH /api/inventory/stock:", error);
+
+    return NextResponse.json(
+      { error: "Error interno del servidor." },
+      { status: 500 }
+    );
+  }
+}

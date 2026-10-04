@@ -953,6 +953,7 @@ export default function WarehouseLocationsPage() {
 
                       <input
                         type="number"
+                        onWheel={(event) => event.currentTarget.blur()}
                         min="0"
                         step="1"
                         value={form.capacity}

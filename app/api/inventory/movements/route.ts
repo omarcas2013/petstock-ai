@@ -214,8 +214,37 @@ export async function POST(request: Request) {
       );
     }
 
-    const { product_id, movement_type, quantity, reason } =
+    const { product_id, movement_type, quantity, reason, stock_id } =
       body;
+
+    // Tanda 4: origen opcional (fila de inventory_stock) solo para
+    // salidas. Sin él, la salida sale de lo "sin ubicar".
+    const stockId =
+      typeof stock_id === "string" && stock_id.trim() !== ""
+        ? stock_id.trim()
+        : null;
+
+    if (
+      stockId &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        stockId
+      )
+    ) {
+      return NextResponse.json(
+        { error: "La ubicación de origen no es válida." },
+        { status: 400 }
+      );
+    }
+
+    if (stockId && movement_type !== "salida") {
+      return NextResponse.json(
+        {
+          error:
+            "Solo las salidas pueden indicar una ubicación de origen.",
+        },
+        { status: 400 }
+      );
+    }
 
     if (!product_id) {
       return NextResponse.json(
@@ -279,6 +308,7 @@ export async function POST(request: Request) {
         p_quantity: quantity,
         p_reason: typeof reason === "string" ? reason : null,
         p_store_id: profile.store_id,
+        p_stock_id: stockId,
       }
     );
 
