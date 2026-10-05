@@ -366,10 +366,20 @@ export default function MovimientosPage() {
       type Row = {
         id: string;
         quantity: number;
-        branches: { name: string } | null;
-        warehouses: { name: string } | null;
+        branches: { name: string; code?: string | null } | null;
+        warehouses: { name: string; code?: string | null } | null;
         locations: { name: string } | null;
       };
+
+      // Tanda 5: "Principal (PPA024)" para distinguir almacenes.
+      const withCode = (
+        entity: { name: string; code?: string | null } | null
+      ) =>
+        entity?.name
+          ? entity.code
+            ? `${entity.name} (${entity.code})`
+            : entity.name
+          : null;
 
       setStockOptions(
         ((result.stock ?? []) as Row[])
@@ -378,9 +388,9 @@ export default function MovimientosPage() {
             id: row.id,
             quantity: Number(row.quantity),
             label: row.locations?.name
-              ? `${row.warehouses?.name ?? "Almacén"} · ${row.locations.name}`
-              : row.warehouses?.name ??
-                row.branches?.name ??
+              ? `${withCode(row.warehouses) ?? "Almacén"} · ${row.locations.name}`
+              : withCode(row.warehouses) ??
+                withCode(row.branches) ??
                 "Ubicación",
           }))
           .sort((a, b) => b.quantity - a.quantity)

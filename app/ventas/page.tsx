@@ -45,10 +45,62 @@ type StockApiRow = {
   id: string;
   product_id: string;
   quantity: number;
-  branches: { name: string } | null;
-  warehouses: { name: string } | null;
+  branches: { name: string; code?: string | null } | null;
+  warehouses: { name: string; code?: string | null } | null;
   locations: { name: string } | null;
 };
+
+// Tanda 5: lotes activos con unidades (para avisar vencidos).
+type LotInfo = {
+  product_id: string;
+  lot_number: string;
+  expiration_date: string | null;
+  quantity: number;
+};
+
+// Si falla, devuelve vacío: los lotes solo sirven para el aviso de
+// vencidos y no deben impedir elegir la ubicación ni vender.
+async function fetchLots(): Promise<Record<string, LotInfo[]>> {
+  let result: { lots?: LotInfo[] };
+
+  try {
+    const response = await fetch("/api/lots", { cache: "no-store" });
+
+    result = await response.json();
+
+    if (!response.ok) {
+      console.error("Error cargando lotes:", result);
+      return {};
+    }
+  } catch (error) {
+    console.error("Error cargando lotes:", error);
+    return {};
+  }
+
+  const grouped: Record<string, LotInfo[]> = {};
+
+  for (const lot of (result.lots ?? []) as LotInfo[]) {
+    (grouped[lot.product_id] ??= []).push({
+      ...lot,
+      quantity: Number(lot.quantity || 0),
+    });
+  }
+
+  return grouped;
+}
+
+// Tanda 5: "Principal (PPA024)" para distinguir almacenes con el
+// mismo nombre.
+function withCode(
+  entity: { name: string; code?: string | null } | null | undefined,
+  fallback: string
+) {
+  if (!entity?.name) {
+    return fallback;
+  }
+
+  return entity.code ? `${entity.name} (${entity.code})` : entity.name;
+}
 
 async function fetchLocatedStock(): Promise<
   Record<string, StockOption[]>
@@ -91,14 +143,14 @@ async function fetchLocatedStock(): Promise<
 
 function stockLabel(row: StockApiRow) {
   if (row.locations?.name) {
-    return `${row.warehouses?.name ?? "Almacén"} · ${row.locations.name}`;
+    return `${withCode(row.warehouses, "Almacén")} · ${row.locations.name}`;
   }
 
   if (row.warehouses?.name) {
-    return row.warehouses.name;
+    return withCode(row.warehouses, "Almacén");
   }
 
-  return row.branches?.name ?? "Ubicación";
+  return withCode(row.branches, "Ubicación");
 }
 
 type SaleItem = {
@@ -135,6 +187,9 @@ export default function VentasPage() {
   // product_id -> existencias ubicadas con cantidad > 0
   const [locatedByProduct, setLocatedByProduct] =
     useState<Record<string, StockOption[]>>({});
+
+  const [lotsByProduct, setLotsByProduct] =
+    useState<Record<string, LotInfo[]>>({});
 
   const [sales, setSales] =
     useState<Sale[]>([]);
@@ -203,7 +258,13 @@ export default function VentasPage() {
 
   async function loadLocatedStock() {
     try {
-      setLocatedByProduct(await fetchLocatedStock());
+      const [located, lots] = await Promise.all([
+        fetchLocatedStock(),
+        fetchLots(),
+      ]);
+
+      setLocatedByProduct(located);
+      setLotsByProduct(lots);
     } catch (error) {
       console.error(error);
 
@@ -220,6 +281,47 @@ export default function VentasPage() {
       (sum, option) => sum + option.quantity,
       0
     );
+  }
+
+  // Tanda 5: cuántas unidades vencidas saldrían si se vende todo lo
+  // que hay en el carrito de este producto (FEFO: primero lotes
+  // vigentes, luego sin lote, al final vencidos).
+  function expiredForProduct(product: Product) {
+    const lots = lotsByProduct[product.id] ?? [];
+
+    if (lots.length === 0) {
+      return { units: 0, lots: [] as string[] };
+    }
+
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Bogota",
+    }).format(new Date());
+
+    const current =
+      products.find((candidate) => candidate.id === product.id) ??
+      product;
+
+    const isExpired = (lot: LotInfo) =>
+      lot.expiration_date !== null && lot.expiration_date < today;
+
+    const lotted = lots.reduce((sum, lot) => sum + lot.quantity, 0);
+    const vigente = lots
+      .filter((lot) => !isExpired(lot))
+      .reduce((sum, lot) => sum + lot.quantity, 0);
+    const unlotted = Math.max(Number(current.stock || 0) - lotted, 0);
+
+    const inCart = cart
+      .filter((item) => item.product.id === product.id)
+      .reduce((sum, item) => sum + item.quantity, 0);
+
+    const units = Math.max(inCart - vigente - unlotted, 0);
+
+    return {
+      units,
+      lots: units > 0
+        ? lots.filter(isExpired).map((lot) => lot.lot_number)
+        : [],
+    };
   }
 
   function unlocatedQuantity(product: Product) {
@@ -418,10 +520,14 @@ export default function VentasPage() {
     // marque como fallido el historial de ventas.
     async function fetchInitialLocated() {
       try {
-        const located = await fetchLocatedStock();
+        const [located, lots] = await Promise.all([
+          fetchLocatedStock(),
+          fetchLots(),
+        ]);
 
         if (!cancelled) {
           setLocatedByProduct(located);
+          setLotsByProduct(lots);
         }
       } catch (error) {
         if (!cancelled) {
@@ -737,10 +843,16 @@ export default function VentasPage() {
         result.sale?.total ?? total
       );
 
+      const warnings: string[] = Array.isArray(
+        result.sale?.warnings
+      )
+        ? result.sale.warnings
+        : [];
+
       setMessage(
         `Venta registrada correctamente. Total: ${formatPrice(
           saleTotal
-        )}`
+        )}${warnings.length > 0 ? ` ⚠️ ${warnings.join(" ")}` : ""}`
       );
 
       await loadProducts();
@@ -1057,6 +1169,24 @@ export default function VentasPage() {
                           )}
                         </span>
                       </div>
+
+                      {/* Tanda 5: aviso de vencidos (una vez por
+                          producto, en su primera línea). */}
+                      {cart.find(
+                        (candidate) =>
+                          candidate.product.id === item.product.id
+                      )?.lineKey === item.lineKey &&
+                        expiredForProduct(item.product).units > 0 && (
+                          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                            ⚠️ Incluye{" "}
+                            {expiredForProduct(item.product).units}{" "}
+                            unidades vencidas (lote{" "}
+                            {expiredForProduct(item.product).lots.join(
+                              ", "
+                            )}
+                            ).
+                          </p>
+                        )}
 
                       {(locatedByProduct[item.product.id] ?? [])
                         .length > 0 && (

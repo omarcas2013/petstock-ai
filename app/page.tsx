@@ -97,6 +97,20 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [products, setProducts] = useState<Product[]>([]);
+
+  // Tanda 5: lotes vencidos o por vencer en 60 días (si el negocio
+  // maneja lotes).
+  const [lotAlerts, setLotAlerts] = useState<
+    {
+      id: string;
+      lot_number: string;
+      expiration_date: string;
+      quantity: number;
+      product_id: string;
+      product_name: string;
+      expired: boolean;
+    }[]
+  >([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
 
@@ -219,6 +233,51 @@ export default function DashboardPage() {
         setProducts(productsResult.products || []);
         setSuppliers(suppliersResult.suppliers || []);
         setRecentSales(recentSalesResult.sales || []);
+
+        // Tanda 5: alertas de lotes. No bloquea el dashboard si falla.
+        try {
+          const lotsResponse = await fetch("/api/lots", {
+            cache: "no-store",
+          });
+
+          const lotsResult = await lotsResponse.json();
+
+          if (lotsResponse.ok) {
+            const today = getTodayKey();
+            const limitDate = new Date();
+            limitDate.setDate(limitDate.getDate() + 60);
+            const limit = getBogotaDateKey(limitDate);
+
+            type LotRow = {
+              id: string;
+              lot_number: string;
+              expiration_date: string | null;
+              quantity: number;
+              product_id: string;
+              products: { name: string } | null;
+            };
+
+            setLotAlerts(
+              ((lotsResult.lots ?? []) as LotRow[])
+                .filter(
+                  (lot) =>
+                    lot.expiration_date !== null &&
+                    lot.expiration_date <= limit
+                )
+                .map((lot) => ({
+                  id: lot.id,
+                  lot_number: lot.lot_number,
+                  expiration_date: lot.expiration_date as string,
+                  quantity: Number(lot.quantity || 0),
+                  product_id: lot.product_id,
+                  product_name: lot.products?.name ?? "Producto",
+                  expired: (lot.expiration_date as string) < today,
+                }))
+            );
+          }
+        } catch (lotsError) {
+          console.error(lotsError);
+        }
 
         if (canReport) {
           const todayResult = await todayResponse.json();
@@ -519,6 +578,44 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
+        )}
+
+        {/* Tanda 5: lotes vencidos o por vencer */}
+        {lotAlerts.length > 0 && (
+          <section className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <p className="font-semibold text-amber-900">
+              ⚠️ Lotes por vencer (60 días):{" "}
+              {lotAlerts.filter((lot) => !lot.expired).length} · Vencidos:{" "}
+              {lotAlerts.filter((lot) => lot.expired).length}
+            </p>
+
+            <ul className="mt-3 space-y-1 text-sm text-amber-800">
+              {lotAlerts.slice(0, 5).map((lot) => (
+                <li key={lot.id}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push(`/inventario/${lot.product_id}`)
+                    }
+                    className="text-left hover:underline"
+                  >
+                    {lot.product_name} · lote {lot.lot_number} ·{" "}
+                    {lot.quantity} u. ·{" "}
+                    {lot.expired ? "venció" : "vence"}{" "}
+                    {new Date(
+                      `${lot.expiration_date}T00:00:00`
+                    ).toLocaleDateString("es-CO")}
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            {lotAlerts.length > 5 && (
+              <p className="mt-2 text-xs text-amber-700">
+                y {lotAlerts.length - 5} más.
+              </p>
+            )}
+          </section>
         )}
 
         {!canViewReports && (

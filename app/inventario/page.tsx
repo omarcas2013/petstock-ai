@@ -60,6 +60,12 @@ type FileInventoryRow = {
 
 export default function InventarioPage() {
   const [products, setProducts] = useState<Product[]>([]);
+
+  // Tanda 5: estado de vencimiento por producto ("vencido" o
+  // "por_vencer" en 60 días), si el negocio maneja lotes.
+  const [lotStatusByProduct, setLotStatusByProduct] = useState<
+    Record<string, "vencido" | "por_vencer">
+  >({});
   const [movements, setMovements] = useState<Movement[]>([]);
 
   // "Compras" no es una acción de employee (matriz de roles):
@@ -158,6 +164,48 @@ export default function InventarioPage() {
       }
 
       setProducts(result.products || []);
+
+      // Tanda 5: etiquetas de vencimiento (no bloquea si falla).
+      try {
+        const lotsResponse = await fetch("/api/lots", {
+          cache: "no-store",
+        });
+
+        const lotsResult = await lotsResponse.json();
+
+        if (lotsResponse.ok) {
+          const format = (date: Date) =>
+            new Intl.DateTimeFormat("en-CA", {
+              timeZone: "America/Bogota",
+            }).format(date);
+
+          const today = format(new Date());
+          const limitDate = new Date();
+          limitDate.setDate(limitDate.getDate() + 60);
+          const limit = format(limitDate);
+
+          const status: Record<string, "vencido" | "por_vencer"> = {};
+
+          for (const lot of (lotsResult.lots ?? []) as {
+            product_id: string;
+            expiration_date: string | null;
+          }[]) {
+            if (!lot.expiration_date || lot.expiration_date > limit) {
+              continue;
+            }
+
+            if (lot.expiration_date < today) {
+              status[lot.product_id] = "vencido";
+            } else if (!status[lot.product_id]) {
+              status[lot.product_id] = "por_vencer";
+            }
+          }
+
+          setLotStatusByProduct(status);
+        }
+      } catch (lotsError) {
+        console.error(lotsError);
+      }
     } catch (error) {
       console.error(error);
 
@@ -1326,6 +1374,22 @@ export default function InventarioPage() {
                           <td className="px-5 py-4">
                             <div className="font-medium text-gray-900">
                               {product.name}
+
+                              {lotStatusByProduct[product.id] && (
+                                <span
+                                  className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                    lotStatusByProduct[product.id] ===
+                                    "vencido"
+                                      ? "bg-red-100 text-red-700"
+                                      : "bg-amber-100 text-amber-700"
+                                  }`}
+                                >
+                                  {lotStatusByProduct[product.id] ===
+                                  "vencido"
+                                    ? "Lote vencido"
+                                    : "Vence pronto"}
+                                </span>
+                              )}
                             </div>
 
                             {product.presentation && (

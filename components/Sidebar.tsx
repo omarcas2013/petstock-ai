@@ -94,6 +94,13 @@ const otherNavigation: NavItem[] = [
     icon: "📊",
     roles: INVENTORY_MANAGER_ROLES,
   },
+  // Tanda 5: configuración del negocio (lotes), solo owner.
+  {
+    name: "Configuración",
+    href: "/configuracion",
+    icon: "⚙️",
+    roles: ["owner"],
+  },
 ];
 
 function isVisible(item: NavItem, role: string | null) {
@@ -352,28 +359,6 @@ export default function Sidebar() {
                 .map((item) => renderNavItem(item))}
             </div>
           )}
-
-          {/* PRÓXIMAMENTE */}
-
-          <div className="mt-8">
-
-            <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Próximamente
-            </p>
-
-            <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-gray-400">
-
-              <span className="text-lg">
-                ⚙️
-              </span>
-
-              <span>
-                Configuración
-              </span>
-
-            </div>
-
-          </div>
 
         </nav>
 

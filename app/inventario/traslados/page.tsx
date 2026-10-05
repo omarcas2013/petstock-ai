@@ -70,11 +70,18 @@ function formatTransferScope(
   warehouse: NamedRef,
   location: NamedRef
 ) {
-  if (warehouse?.name && location?.name) {
-    return `${warehouse.name} / ${location.name}`;
+  // Tanda 5: el código distingue almacenes con el mismo nombre.
+  const warehouseLabel = warehouse?.name
+    ? warehouse.code
+      ? `${warehouse.name} (${warehouse.code})`
+      : warehouse.name
+    : "";
+
+  if (warehouseLabel && location?.name) {
+    return `${warehouseLabel} / ${location.name}`;
   }
 
-  return warehouse?.name || location?.name || "—";
+  return warehouseLabel || location?.name || "—";
 }
 
 export default function TrasladosPage() {

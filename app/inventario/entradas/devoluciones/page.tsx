@@ -98,6 +98,86 @@ export default function DevolucionesPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Tanda 5: a dónde vuelven las unidades. "" = sin ubicar.
+  const [destinations, setDestinations] = useState<
+    {
+      key: string;
+      label: string;
+      branch_id: string | null;
+      warehouse_id: string | null;
+      location_id: string | null;
+    }[]
+  >([]);
+  const [destinationKey, setDestinationKey] = useState("");
+  const latestDestinationRef = useRef("");
+
+  // Estanterías donde el producto ya tiene existencias.
+  async function loadDestinations(productId: string | null) {
+    latestDestinationRef.current = productId ?? "";
+    setDestinations([]);
+    setDestinationKey("");
+
+    if (!productId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/inventory/stock?product_id=${encodeURIComponent(productId)}`,
+        { cache: "no-store" }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || latestDestinationRef.current !== productId) {
+        return;
+      }
+
+      type Row = {
+        id: string;
+        branch_id: string | null;
+        warehouse_id: string | null;
+        location_id: string | null;
+        branches: { name: string; code?: string | null; is_active?: boolean } | null;
+        warehouses: { name: string; code?: string | null; is_active?: boolean } | null;
+        locations: { name: string; is_active?: boolean } | null;
+      };
+
+      const withCode = (
+        entity: { name: string; code?: string | null } | null
+      ) =>
+        entity?.name
+          ? entity.code
+            ? `${entity.name} (${entity.code})`
+            : entity.name
+          : null;
+
+      setDestinations(
+        ((data.stock ?? []) as Row[])
+          // Solo destinos activos: la función rechaza los inactivos.
+          .filter(
+            (row) =>
+              row.branches?.is_active !== false &&
+              row.warehouses?.is_active !== false &&
+              row.locations?.is_active !== false
+          )
+          .map((row) => ({
+          key: row.id,
+          label: row.locations?.name
+            ? `${withCode(row.warehouses) ?? "Almacén"} · ${row.locations.name}`
+            : withCode(row.warehouses) ??
+              withCode(row.branches) ??
+              "Ubicación",
+          branch_id: row.branch_id,
+          warehouse_id: row.warehouse_id,
+          location_id: row.location_id,
+        }))
+      );
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function loadData() {
     try {
       setLoading(true);
@@ -231,6 +311,8 @@ export default function DevolucionesPage() {
           ...current,
           saleItemId: items[0].id,
         }));
+
+        void loadDestinations(items[0].product_id);
       }
     } catch (err) {
       if (latestSaleRequestRef.current !== saleId) {
@@ -427,6 +509,20 @@ export default function DevolucionesPage() {
             sale_item_id: form.saleItemId,
             quantity,
             reason: form.reason.trim() || null,
+            // Tanda 5: destino (vacío = sin ubicar).
+            ...(() => {
+              const destination = destinations.find(
+                (candidate) => candidate.key === destinationKey
+              );
+
+              return destination
+                ? {
+                    branch_id: destination.branch_id,
+                    warehouse_id: destination.warehouse_id,
+                    location_id: destination.location_id,
+                  }
+                : {};
+            })(),
           }),
         }
       );
@@ -939,13 +1035,15 @@ export default function DevolucionesPage() {
                           <button
                             key={item.id}
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
                               setForm((current) => ({
                                 ...current,
                                 saleItemId: item.id,
                                 quantity: "",
-                              }))
-                            }
+                              }));
+
+                              void loadDestinations(item.product_id);
+                            }}
                             disabled={
                               saving || fullyReturned
                             }
@@ -1072,6 +1170,35 @@ export default function DevolucionesPage() {
                     placeholder="Ej. 1"
                     className="w-full rounded-lg border border-emerald-300 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
                   />
+                </div>
+              )}
+
+              {/* DESTINO (tanda 5) */}
+              {selectedItem && destinations.length > 0 && (
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                    ¿A dónde vuelven las unidades?
+                  </label>
+
+                  <select
+                    value={destinationKey}
+                    onChange={(event) =>
+                      setDestinationKey(event.target.value)
+                    }
+                    disabled={saving}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm"
+                  >
+                    <option value="">Sin ubicar</option>
+
+                    {destinations.map((destination) => (
+                      <option
+                        key={destination.key}
+                        value={destination.key}
+                      >
+                        {destination.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
