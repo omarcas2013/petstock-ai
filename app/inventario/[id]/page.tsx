@@ -136,6 +136,10 @@ export default function EditarProductoPage() {
   // Tanda 5: ¿el negocio maneja lotes? (Configuración, solo owner)
   const [storeManagesLots, setStoreManagesLots] =
     useState(false);
+  // Lo que está GUARDADO (no lo marcado en el formulario): los lotes
+  // solo se pueden crear si el producto ya quedó guardado con lotes.
+  const [savedManagesLots, setSavedManagesLots] =
+    useState(false);
   const [updatingLotId, setUpdatingLotId] =
     useState<string | null>(null);
   const [lotsLoading, setLotsLoading] = useState(false);
@@ -312,10 +316,14 @@ export default function EditarProductoPage() {
   |--------------------------------------------------------------------------
   */
 
-  async function handleCreateLot(
-    event: FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
+  // Tanda 5: el formulario del lote está dentro del formulario del
+  // producto (un <form> no puede ir dentro de otro), así que se maneja
+  // con un botón y no con onSubmit.
+  async function handleCreateLot() {
+    if (!lotForm.lot_number.trim()) {
+      setLotMessage("❌ El número de lote es obligatorio.");
+      return;
+    }
 
     if (!productId) {
       setLotMessage(
@@ -483,6 +491,8 @@ export default function EditarProductoPage() {
           setCurrentStock(
             product.stock ?? 0
           );
+
+          setSavedManagesLots(product.manages_lots === true);
 
           setForm({
             name:
@@ -1433,7 +1443,15 @@ export default function EditarProductoPage() {
               LOTES Y VENCIMIENTOS
           ========================================================= */}
 
-          {form.manages_lots && storeManagesLots && (
+          {form.manages_lots &&
+            storeManagesLots &&
+            !savedManagesLots && (
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                Guarda el producto para empezar a registrar sus lotes.
+              </section>
+            )}
+
+          {form.manages_lots && storeManagesLots && savedManagesLots && (
             <section className="rounded-2xl bg-white p-6 shadow-sm">
 
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1508,10 +1526,17 @@ export default function EditarProductoPage() {
               {/* FORMULARIO NUEVO LOTE */}
 
               {showLotForm && (
-                <form
-                  onSubmit={
-                    handleCreateLot
-                  }
+                <div
+                  onKeyDown={(event) => {
+                    // Enter dentro del lote no debe guardar el producto.
+                    if (
+                      event.key === "Enter" &&
+                      event.target instanceof HTMLInputElement
+                    ) {
+                      event.preventDefault();
+                      void handleCreateLot();
+                    }
+                  }}
                   className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-5"
                 >
 
@@ -1667,7 +1692,8 @@ export default function EditarProductoPage() {
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row">
 
                     <button
-                      type="submit"
+                      type="button"
+                      onClick={() => void handleCreateLot()}
                       disabled={
                         savingLot
                       }
@@ -1697,7 +1723,7 @@ export default function EditarProductoPage() {
 
                   </div>
 
-                </form>
+                </div>
               )}
 
               {/* LISTADO */}
