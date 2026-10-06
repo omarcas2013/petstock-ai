@@ -11,6 +11,7 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 /*
 |--------------------------------------------------------------------------
@@ -575,8 +576,10 @@ export async function POST(request: Request) {
         );
       }
 
+      // Tanda 5: los avisos de negocio (P0001, por ejemplo "Activa
+      // primero el manejo de lotes...") sí se muestran.
       return NextResponse.json(
-        { error: "No se pudo crear el producto." },
+        { error: rpcErrorMessage(error, "No se pudo crear el producto.") },
         { status: 400 }
       );
     }

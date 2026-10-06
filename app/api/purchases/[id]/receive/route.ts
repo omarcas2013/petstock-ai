@@ -213,6 +213,8 @@ export async function POST(
       branch_id?: string | null;
       warehouse_id?: string | null;
       location_id?: string | null;
+      // Tanda 5: lote por ítem (opcional).
+      lots?: unknown;
     } = {};
 
     try {
@@ -319,11 +321,68 @@ export async function POST(
     }
 
     // =======================================================
+    // LOTES (tanda 5, opcional)
+    // =======================================================
+    //
+    // [{ purchase_item_id, lot_number, expiration_date }]. Solo se
+    // envían las filas con número de lote; la función valida que el
+    // negocio y el producto manejen lotes.
+
+    const lots: {
+      purchase_item_id: string;
+      lot_number: string;
+      expiration_date: string | null;
+    }[] = [];
+
+    if (Array.isArray(body.lots)) {
+      for (const raw of body.lots as Record<string, unknown>[]) {
+        const itemId =
+          typeof raw?.purchase_item_id === "string"
+            ? raw.purchase_item_id.trim()
+            : "";
+
+        const lotNumber =
+          typeof raw?.lot_number === "string"
+            ? raw.lot_number.trim()
+            : "";
+
+        const expiration =
+          typeof raw?.expiration_date === "string" &&
+          raw.expiration_date.trim() !== ""
+            ? raw.expiration_date.trim()
+            : null;
+
+        if (!itemId || !lotNumber) {
+          continue;
+        }
+
+        if (expiration && !/^\d{4}-\d{2}-\d{2}$/.test(expiration)) {
+          return NextResponse.json(
+            {
+              error: `La fecha de vencimiento del lote ${lotNumber} no es válida.`,
+            },
+            { status: 400 }
+          );
+        }
+
+        lots.push({
+          purchase_item_id: itemId,
+          lot_number: lotNumber,
+          expiration_date: expiration,
+        });
+      }
+    }
+
+    // =======================================================
     // LLAMAR RPC
     // =======================================================
+    //
+    // receive_purchase_with_lots recibe la compra (misma lógica de
+    // receive_purchase_at_scope) y asigna los lotes en la misma
+    // transacción.
 
     const { data, error } = await supabase.rpc(
-      "receive_purchase_at_scope",
+      "receive_purchase_with_lots",
       {
         p_store_id: storeId,
         p_purchase_id: purchaseId,
@@ -331,6 +390,7 @@ export async function POST(
         p_branch_id: branchId,
         p_warehouse_id: warehouseId,
         p_location_id: locationId,
+        p_lots: lots,
       }
     );
 

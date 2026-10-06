@@ -10,6 +10,7 @@ import {
   requireRole,
   requireUser,
 } from "@/lib/auth/require-role";
+import { rpcErrorMessage } from "@/lib/supabase/rpc-error";
 
 function normalizeText(value: unknown) {
   if (typeof value !== "string") {
@@ -621,8 +622,10 @@ export async function PUT(
         );
       }
 
+      // Tanda 5: los avisos de negocio (P0001, por ejemplo "Activa
+      // primero el manejo de lotes...") sí se muestran.
       return NextResponse.json(
-        { error: "No se pudo actualizar el producto." },
+        { error: rpcErrorMessage(error, "No se pudo actualizar el producto.") },
         { status: 400 }
       );
     }

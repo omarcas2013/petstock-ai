@@ -82,6 +82,7 @@ type Purchase = {
       id: string;
       name: string;
       sku: string | null;
+      manages_lots?: boolean | null;
     } | null;
   }[];
 
@@ -112,6 +113,12 @@ export default function RecepcionesPage() {
   // 403 de GET /api/purchases: la página no se usa ni se muestra
   // vacía, se reemplaza por un aviso de acceso.
   const [accessDenied, setAccessDenied] = useState(false);
+
+  // Tanda 5: lote por ítem al recibir (si el negocio maneja lotes).
+  const [storeManagesLots, setStoreManagesLots] = useState(false);
+  const [lotInputs, setLotInputs] = useState<
+    Record<string, { lot_number: string; expiration_date: string }>
+  >({});
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -408,7 +415,41 @@ export default function RecepcionesPage() {
 
     setShowReceiveModal(true);
 
+    setLotInputs({});
+
     void loadInventoryMode(purchase.id);
+    void loadStoreLotsSetting();
+  }
+
+  async function loadStoreLotsSetting() {
+    try {
+      const response = await fetch("/api/store", {
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      setStoreManagesLots(
+        response.ok && data.store?.manages_lots === true
+      );
+    } catch {
+      setStoreManagesLots(false);
+    }
+  }
+
+  function updateLotInput(
+    itemId: string,
+    field: "lot_number" | "expiration_date",
+    value: string
+  ) {
+    setLotInputs((previous) => ({
+      ...previous,
+      [itemId]: {
+        lot_number: previous[itemId]?.lot_number ?? "",
+        expiration_date: previous[itemId]?.expiration_date ?? "",
+        [field]: value,
+      },
+    }));
   }
 
   function closeReceiveModal() {
@@ -503,7 +544,27 @@ export default function RecepcionesPage() {
       branch_id?: string;
       warehouse_id?: string;
       location_id?: string;
+      lots?: {
+        purchase_item_id: string;
+        lot_number: string;
+        expiration_date: string | null;
+      }[];
     } = {};
+
+    if (storeManagesLots) {
+      body.lots = selectedPurchase.purchase_items
+        .filter(
+          (item) =>
+            item.products?.manages_lots === true &&
+            (lotInputs[item.id]?.lot_number ?? "").trim() !== ""
+        )
+        .map((item) => ({
+          purchase_item_id: item.id,
+          lot_number: lotInputs[item.id].lot_number.trim(),
+          expiration_date:
+            lotInputs[item.id].expiration_date || null,
+        }));
+    }
 
     if (inventoryMode === "branch") {
       body.branch_id = selectedBranchId;
@@ -1672,6 +1733,81 @@ export default function RecepcionesPage() {
                     </table>
                   </div>
                 </div>
+
+                {/* LOTES (tanda 5) */}
+                {storeManagesLots &&
+                  selectedPurchase.purchase_items.some(
+                    (item) => item.products?.manages_lots === true
+                  ) && (
+                    <div className="rounded-xl border border-slate-200 p-4">
+                      <p className="font-semibold text-slate-900">
+                        Lotes y vencimientos
+                      </p>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        Opcional. Si dejas el lote vacío, las unidades
+                        quedan &quot;sin lote&quot;. Si el lote ya
+                        existe, se suman a él.
+                      </p>
+
+                      <div className="mt-4 space-y-3">
+                        {selectedPurchase.purchase_items
+                          .filter(
+                            (item) =>
+                              item.products?.manages_lots === true
+                          )
+                          .map((item) => (
+                            <div
+                              key={item.id}
+                              className="grid gap-3 sm:grid-cols-3 sm:items-end"
+                            >
+                              <p className="text-sm font-medium text-slate-800">
+                                {item.products?.name || "Producto"} (
+                                {Number(item.quantity)} u.)
+                              </p>
+
+                              <label className="text-xs text-slate-600">
+                                Número de lote
+                                <input
+                                  type="text"
+                                  value={
+                                    lotInputs[item.id]?.lot_number ?? ""
+                                  }
+                                  onChange={(event) =>
+                                    updateLotInput(
+                                      item.id,
+                                      "lot_number",
+                                      event.target.value
+                                    )
+                                  }
+                                  placeholder="Ej. LOT-2026-001"
+                                  className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm"
+                                />
+                              </label>
+
+                              <label className="text-xs text-slate-600">
+                                Vencimiento
+                                <input
+                                  type="date"
+                                  value={
+                                    lotInputs[item.id]
+                                      ?.expiration_date ?? ""
+                                  }
+                                  onChange={(event) =>
+                                    updateLotInput(
+                                      item.id,
+                                      "expiration_date",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm"
+                                />
+                              </label>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
 
                 {/* AVISO */}
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">

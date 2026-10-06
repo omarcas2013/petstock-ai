@@ -36,7 +36,8 @@ const PURCHASES_SELECT = `
     products (
       id,
       name,
-      sku
+      sku,
+      manages_lots
     )
   ),
 

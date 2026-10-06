@@ -123,6 +123,31 @@ export async function POST(request: Request) {
 
     const { sale_id, sale_item_id, quantity, reason } = body;
 
+    // Tanda 5: destino opcional de las unidades devueltas (sucursal,
+    // almacén o almacén + ubicación). Sin destino quedan "sin ubicar".
+    const UUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    const optionalId = (value: unknown) =>
+      typeof value === "string" && value.trim() !== ""
+        ? value.trim()
+        : null;
+
+    const destBranchId = optionalId(body.branch_id);
+    const destWarehouseId = optionalId(body.warehouse_id);
+    const destLocationId = optionalId(body.location_id);
+
+    if (
+      [destBranchId, destWarehouseId, destLocationId].some(
+        (value) => value !== null && !UUID.test(value)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "El destino de la devolución no es válido." },
+        { status: 400 }
+      );
+    }
+
     if (!sale_id) {
       return NextResponse.json(
         { error: "Falta sale_id." },
@@ -229,13 +254,18 @@ export async function POST(request: Request) {
      * - crea el movimiento de entrada
      */
     const { data: result, error: rpcError } =
-      await supabase.rpc("register_customer_return", {
+      await supabase.rpc("register_return", {
         p_store_id: profile.store_id,
         p_sale_id: sale_id,
         p_sale_item_id: sale_item_id,
         p_quantity: quantity,
         p_reason:
           typeof reason === "string" ? reason : null,
+        // Tanda 5: vuelve al lote de la venta y, si se eligió, a una
+        // estantería.
+        p_branch_id: destBranchId,
+        p_warehouse_id: destWarehouseId,
+        p_location_id: destLocationId,
       });
 
     if (rpcError) {

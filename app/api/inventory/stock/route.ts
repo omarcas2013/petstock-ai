@@ -68,21 +68,24 @@ export async function GET(request: NextRequest) {
           branches (
             id,
             name,
-            code
+            code,
+            is_active
           ),
 
           warehouses (
             id,
             name,
             code,
-            branch_id
+            branch_id,
+            is_active
           ),
 
           locations (
             id,
             name,
             code,
-            location_type
+            location_type,
+            is_active
           ),
 
           products (

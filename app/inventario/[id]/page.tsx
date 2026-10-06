@@ -133,6 +133,15 @@ export default function EditarProductoPage() {
   */
 
   const [lots, setLots] = useState<ProductLot[]>([]);
+  // Tanda 5: ¿el negocio maneja lotes? (Configuración, solo owner)
+  const [storeManagesLots, setStoreManagesLots] =
+    useState(false);
+  // Lo que está GUARDADO (no lo marcado en el formulario): los lotes
+  // solo se pueden crear si el producto ya quedó guardado con lotes.
+  const [savedManagesLots, setSavedManagesLots] =
+    useState(false);
+  const [updatingLotId, setUpdatingLotId] =
+    useState<string | null>(null);
   const [lotsLoading, setLotsLoading] = useState(false);
   const [showLotForm, setShowLotForm] = useState(false);
   const [savingLot, setSavingLot] = useState(false);
@@ -267,7 +276,7 @@ export default function EditarProductoPage() {
         (1000 * 60 * 60 * 24)
     );
 
-    if (days <= 30) {
+    if (days <= 60) {
       return {
         label:
           days === 0
@@ -307,10 +316,14 @@ export default function EditarProductoPage() {
   |--------------------------------------------------------------------------
   */
 
-  async function handleCreateLot(
-    event: FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
+  // Tanda 5: el formulario del lote está dentro del formulario del
+  // producto (un <form> no puede ir dentro de otro), así que se maneja
+  // con un botón y no con onSubmit.
+  async function handleCreateLot() {
+    if (!lotForm.lot_number.trim()) {
+      setLotMessage("❌ El número de lote es obligatorio.");
+      return;
+    }
 
     if (!productId) {
       setLotMessage(
@@ -375,6 +388,54 @@ export default function EditarProductoPage() {
 
   /*
   |--------------------------------------------------------------------------
+  | EDITAR / DESACTIVAR LOTE (tanda 5)
+  |--------------------------------------------------------------------------
+  */
+
+  async function updateLot(
+    lotId: string,
+    changes: { quantity?: number; is_active?: boolean }
+  ) {
+    if (!productId) {
+      return;
+    }
+
+    setUpdatingLotId(lotId);
+    setLotMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/products/${productId}/lots`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lot_id: lotId, ...changes }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setLotMessage(
+          `❌ ${result.error || "No se pudo actualizar el lote."}`
+        );
+        return;
+      }
+
+      await loadLots();
+
+      setLotMessage("✅ Lote actualizado.");
+    } catch (error) {
+      console.error("Error actualizando lote:", error);
+
+      setLotMessage("❌ No se pudo conectar con el servidor.");
+    } finally {
+      setUpdatingLotId(null);
+    }
+  }
+
+  /*
+  |--------------------------------------------------------------------------
   | CARGAR PRODUCTO
   |--------------------------------------------------------------------------
   */
@@ -394,12 +455,24 @@ export default function EditarProductoPage() {
         const [
           productResponse,
           suppliersResponse,
+          storeResponse,
         ] = await Promise.all([
           fetch(
             `/api/products/${productId}`
           ),
           fetch("/api/suppliers"),
+          fetch("/api/store", { cache: "no-store" }),
         ]);
+
+        if (storeResponse.ok) {
+          const storeResult = await storeResponse.json();
+
+          if (!cancelled) {
+            setStoreManagesLots(
+              storeResult.store?.manages_lots === true
+            );
+          }
+        }
 
         const productResult =
           await productResponse.json();
@@ -418,6 +491,8 @@ export default function EditarProductoPage() {
           setCurrentStock(
             product.stock ?? 0
           );
+
+          setSavedManagesLots(product.manages_lots === true);
 
           setForm({
             name:
@@ -1323,6 +1398,9 @@ export default function EditarProductoPage() {
                 MANEJA LOTES
             ===================================================== */}
 
+            {/* Tanda 5: solo si el negocio maneja lotes (o el producto
+                ya los tenía, para poder quitarlos). */}
+            {(storeManagesLots || form.manages_lots) && (
             <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
 
               <label className="flex cursor-pointer items-start gap-3">
@@ -1357,6 +1435,7 @@ export default function EditarProductoPage() {
               </label>
 
             </div>
+            )}
 
           </section>
 
@@ -1364,7 +1443,15 @@ export default function EditarProductoPage() {
               LOTES Y VENCIMIENTOS
           ========================================================= */}
 
-          {form.manages_lots && (
+          {form.manages_lots &&
+            storeManagesLots &&
+            !savedManagesLots && (
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                Guarda el producto para empezar a registrar sus lotes.
+              </section>
+            )}
+
+          {form.manages_lots && storeManagesLots && savedManagesLots && (
             <section className="rounded-2xl bg-white p-6 shadow-sm">
 
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1403,17 +1490,27 @@ export default function EditarProductoPage() {
 
                 <p className="text-sm text-blue-800">
                   <strong>
-                    Importante:
+                    Unidades sin lote:
                   </strong>{" "}
-                  la cantidad registrada en
-                  un lote no modifica el stock
-                  global del producto.
+                  {Math.max(
+                    currentStock -
+                      lots
+                        .filter((lot) => lot.is_active)
+                        .reduce(
+                          (sum, lot) =>
+                            sum + Number(lot.quantity || 0),
+                          0
+                        ),
+                    0
+                  )}{" "}
+                  de {currentStock}.
                 </p>
 
                 <p className="mt-1 text-xs text-blue-700">
-                  El stock global se actualiza
-                  mediante las operaciones de
-                  inventario correspondientes.
+                  Un lote nuevo toma unidades &quot;sin lote&quot;
+                  (no cambia el stock total). Las ventas y salidas
+                  descuentan primero el lote que vence antes; los
+                  vencidos salen al final y con aviso.
                 </p>
 
               </div>
@@ -1429,10 +1526,17 @@ export default function EditarProductoPage() {
               {/* FORMULARIO NUEVO LOTE */}
 
               {showLotForm && (
-                <form
-                  onSubmit={
-                    handleCreateLot
-                  }
+                <div
+                  onKeyDown={(event) => {
+                    // Enter dentro del lote no debe guardar el producto.
+                    if (
+                      event.key === "Enter" &&
+                      event.target instanceof HTMLInputElement
+                    ) {
+                      event.preventDefault();
+                      void handleCreateLot();
+                    }
+                  }}
                   className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-5"
                 >
 
@@ -1583,42 +1687,13 @@ export default function EditarProductoPage() {
 
                   </div>
 
-                  {/* ACTIVO */}
-
-                  <label className="mt-5 flex cursor-pointer items-center gap-3">
-
-                    <input
-                      type="checkbox"
-                      checked={
-                        lotForm.is_active
-                      }
-                      onChange={(e) =>
-                        setLotForm(
-                          (
-                            previous
-                          ) => ({
-                            ...previous,
-                            is_active:
-                              e.target
-                                .checked,
-                          })
-                        )
-                      }
-                      className="h-5 w-5 rounded border-gray-300"
-                    />
-
-                    <span className="text-sm font-medium text-gray-700">
-                      Lote activo
-                    </span>
-
-                  </label>
-
                   {/* BOTONES */}
 
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row">
 
                     <button
-                      type="submit"
+                      type="button"
+                      onClick={() => void handleCreateLot()}
                       disabled={
                         savingLot
                       }
@@ -1648,7 +1723,7 @@ export default function EditarProductoPage() {
 
                   </div>
 
-                </form>
+                </div>
               )}
 
               {/* LISTADO */}
@@ -1702,6 +1777,10 @@ export default function EditarProductoPage() {
 
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                           Estado
+                        </th>
+
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Acciones
                         </th>
 
                       </tr>
@@ -1767,6 +1846,65 @@ export default function EditarProductoPage() {
                                   }
                                 </span>
 
+                              </td>
+
+                              <td className="px-4 py-4 text-right">
+                                {lot.is_active && (
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={updatingLotId === lot.id}
+                                      onClick={() => {
+                                        const value = window.prompt(
+                                          `Nueva cantidad del lote ${lot.lot_number}:`,
+                                          String(lot.quantity)
+                                        );
+
+                                        if (value === null) {
+                                          return;
+                                        }
+
+                                        const quantity = Number(value);
+
+                                        if (
+                                          !Number.isInteger(quantity) ||
+                                          quantity < 0
+                                        ) {
+                                          setLotMessage(
+                                            "❌ La cantidad debe ser un entero mayor o igual a 0."
+                                          );
+                                          return;
+                                        }
+
+                                        void updateLot(lot.id, {
+                                          quantity,
+                                        });
+                                      }}
+                                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                    >
+                                      Editar cantidad
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={updatingLotId === lot.id}
+                                      onClick={() => {
+                                        if (
+                                          window.confirm(
+                                            `¿Desactivar el lote ${lot.lot_number}? Sus ${lot.quantity} unidades quedarán "sin lote".`
+                                          )
+                                        ) {
+                                          void updateLot(lot.id, {
+                                            is_active: false,
+                                          });
+                                        }
+                                      }}
+                                      className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                    >
+                                      Desactivar
+                                    </button>
+                                  </div>
+                                )}
                               </td>
 
                             </tr>
