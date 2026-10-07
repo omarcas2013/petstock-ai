@@ -21,6 +21,13 @@ export default function ReportesPage() {
       available: true,
     },
     {
+      title: "Sugeridos de compra",
+      description:
+        "Calcula cuánto pedir a cada proveedor según la demanda, el stock mínimo y las compras pendientes.",
+      path: "/reportes/sugeridos",
+      available: true,
+    },
+    {
       title: "Reporte de productos",
       description: "Consulta el comportamiento y rendimiento de tus productos.",
       path: "/reportes/productos",
